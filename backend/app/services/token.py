@@ -43,6 +43,23 @@ class TokenService:
         )
         return TokenPair(access, refresh, refresh_ttl)
 
+    def issue_pre_auth(self, user_id: str) -> str:
+        """Issue a short-lived token proving password success, pending OTP."""
+        token, _ = create_token(
+            user_id,
+            "pre_auth",
+            timedelta(minutes=settings.PRE_AUTH_TOKEN_EXPIRE_MINUTES),
+        )
+        return token
+
+    def verify_pre_auth(self, token: str) -> str:
+        """Validate a pre-auth token and return its subject (user id)."""
+        try:
+            payload = decode_token(token, expected_type="pre_auth")
+        except jwt.PyJWTError as exc:
+            raise AuthError("Invalid or expired pre-authentication token.") from exc
+        return payload["sub"]
+
     async def _is_revoked(self, jti: str) -> bool:
         return bool(await self.redis.exists(f"{_BLACKLIST_PREFIX}{jti}"))
 

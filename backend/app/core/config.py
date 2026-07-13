@@ -26,6 +26,17 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     REFRESH_TOKEN_REMEMBER_ME_DAYS: int = 30
+    # Short-lived token issued between password success and OTP verification.
+    PRE_AUTH_TOKEN_EXPIRE_MINUTES: int = 5
+
+    # --- Two-Factor Authentication ---
+    # Fernet key (urlsafe base64, 32 bytes) used to encrypt TOTP secrets at rest.
+    ENCRYPTION_KEY: str = "_i3FjZl2n-cXVRZCTQE5z5DPJaDhNlXFDBso8tHTClA="
+    TWO_FACTOR_ISSUER: str = "Enterprise Auth Server"
+    TOTP_VALID_WINDOW: int = 1  # accept ±1 time-step (30s each)
+    BACKUP_CODE_COUNT: int = 10
+    TWO_FA_RATE_LIMIT_PER_MINUTE: int = 5
+    TWO_FA_MAX_FAILURES: int = 5
 
     # --- Cookies ---
     COOKIE_SECURE: bool = True

@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.redis.client import get_redis
 from app.services.rate_limit import RateLimiter
 from app.services.token import TokenService
+from app.services.two_factor import TwoFactorService
 
 
 async def db_dependency() -> AsyncGenerator[AsyncSession, None]:
@@ -36,5 +37,10 @@ def get_token_service(redis: RedisClient) -> TokenService:
     return TokenService(redis)
 
 
+def get_two_factor_service(session: DbSession, redis: RedisClient) -> TwoFactorService:
+    return TwoFactorService(session, redis)
+
+
 RateLimiterDep = Annotated[RateLimiter, Depends(get_rate_limiter)]
 TokenServiceDep = Annotated[TokenService, Depends(get_token_service)]
+TwoFactorServiceDep = Annotated[TwoFactorService, Depends(get_two_factor_service)]

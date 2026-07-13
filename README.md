@@ -8,16 +8,16 @@ PostgreSQL data layer with Redis for rate limiting and token state.
 
 ## Status: Foundation slice
 
-This repository currently contains the **foundation slice**: core authentication, RBAC,
-security middleware, and the supporting infrastructure (Docker, CI, migrations). It is meant to
-be a solid base that later slices build on top of. Planned future slices include:
+This repository currently contains the **foundation slice** plus **two-factor authentication
+(2FA)**: core authentication, RBAC, security middleware, TOTP-based 2FA, and the supporting
+infrastructure (Docker, CI, migrations). It is meant to be a solid base that later slices build
+on top of. Planned future slices include:
 
-- OAuth / social login providers
-- Two-factor authentication (2FA)
 - Session management (list/revoke active sessions)
+- OAuth / social login providers
 - Transactional email (verification, password reset)
 - Admin API (user/role management beyond the basic RBAC example)
-- Audit logs
+- Audit logs persisted to the database
 - API keys for service-to-service auth
 - Notifications
 
@@ -65,9 +65,24 @@ permission checks).
 cp backend/.env.example backend/.env
 # edit backend/.env and set a real SECRET_KEY, e.g.:
 #   openssl rand -hex 32
+# and a real ENCRYPTION_KEY for 2FA secret storage, e.g.:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
 docker compose up --build
 ```
+
+See `backend/.env.example` for the full list of configuration options. In addition to the core
+settings, the following env vars configure 2FA:
+
+| Variable | Default | Description |
+|----------|---------|--------------|
+| `ENCRYPTION_KEY` | — (required) | Fernet key used to encrypt TOTP secrets at rest |
+| `PRE_AUTH_TOKEN_EXPIRE_MINUTES` | `5` | Lifetime of the `pre_auth_token` issued after step 1 of a 2FA login |
+| `TWO_FACTOR_ISSUER` | `Enterprise Auth Server` | Issuer name shown in the authenticator app |
+| `TOTP_VALID_WINDOW` | `1` | Number of TOTP time-steps of clock drift tolerated on either side |
+| `BACKUP_CODE_COUNT` | `10` | Number of recovery codes generated per set |
+| `TWO_FA_RATE_LIMIT_PER_MINUTE` | `5` | Rate limit for 2FA verification attempts |
+| `TWO_FA_MAX_FAILURES` | `5` | Number of failed attempts before lockout |
 
 Once the stack is up:
 
@@ -114,6 +129,15 @@ make revision m="add some_table"   # alembic revision --autogenerate
 | POST   | `/api/v1/auth/logout`   | Log out, revokes/blacklists the refresh token |
 | GET    | `/api/v1/auth/me`       | Get the current authenticated user          |
 | GET    | `/api/v1/users`         | List users (requires `manage_users` permission) |
+| POST   | `/api/v1/auth/login/otp` | Complete login with a TOTP code, using the `pre_auth_token` from the initial login |
+| POST   | `/api/v1/auth/login/recovery-code` | Complete login with a recovery code, using the `pre_auth_token` from the initial login |
+| POST   | `/api/v1/auth/2fa/setup` | Start 2FA enrollment; returns provisioning URI, QR code, and secret (not yet active) |
+| POST   | `/api/v1/auth/2fa/verify` | Confirm setup with a TOTP code; activates 2FA |
+| GET    | `/api/v1/auth/2fa/status` | Get 2FA status: enabled, verified_at, recovery codes remaining |
+| GET    | `/api/v1/auth/2fa/qrcode` | Serve the pending setup's QR code as a PNG image |
+| POST   | `/api/v1/auth/2fa/disable` | Disable 2FA (requires password + OTP); deletes the secret and all recovery codes |
+| POST   | `/api/v1/auth/2fa/recovery-codes` | Generate recovery codes (requires password + OTP); shown in plaintext once |
+| POST   | `/api/v1/auth/2fa/recovery-codes/regenerate` | Replace recovery codes (requires password + OTP); shown in plaintext once |
 | GET    | `/api/v1/health`        | Liveness check                              |
 | GET    | `/api/v1/ready`         | Readiness check (verifies DB and Redis connectivity) |
 
@@ -131,6 +155,54 @@ make revision m="add some_table"   # alembic revision --autogenerate
 - **Security headers:** applied via middleware (e.g. `X-Content-Type-Options`,
   `X-Frame-Options`, and related hardening headers)
 - **CORS:** explicit, configurable allow-list of origins (no wildcard by default)
+
+### Two-Factor Authentication (2FA)
+
+The server supports TOTP-based two-factor authentication ([RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238)),
+compatible with standard authenticator apps such as Google Authenticator, Microsoft
+Authenticator, Authy, 1Password, and Bitwarden.
+
+**Enabling 2FA:**
+
+1. `POST /api/v1/auth/2fa/setup` with `{"password": "..."}` returns a `provisioning_uri`,
+   `qr_code_base64`, and the raw `secret`. 2FA is **not yet active** at this point.
+2. The user scans the QR code (or enters the secret manually) in their authenticator app.
+3. `POST /api/v1/auth/2fa/verify` with `{"otp": "123456"}` confirms the code and activates 2FA,
+   returning `{"success": true}`.
+
+**Logging in with 2FA enabled** is a two-step flow:
+
+1. `POST /api/v1/auth/login` returns `{"otp_required": true, "pre_auth_token": "..."}` with
+   **no session cookies set**. No JWT is issued until the second factor is verified.
+2. The client then calls either:
+   - `POST /api/v1/auth/login/otp` with `{"pre_auth_token": "...", "otp": "123456"}`, or
+   - `POST /api/v1/auth/login/recovery-code` with
+     `{"pre_auth_token": "...", "recovery_code": "ABCD-EFGH-IJKL"}`
+
+   to receive the real session (httpOnly cookies), as in the standard login flow.
+
+**Recovery codes:** 10 single-use codes are generated in the format `XXXX-XXXX-XXXX` (12
+alphanumeric characters grouped with dashes). They are shown in plaintext exactly once and
+stored server-side only as Argon2 hashes. `POST /api/v1/auth/2fa/recovery-codes` (requires
+`{password, otp}`) generates them, and `POST /api/v1/auth/2fa/recovery-codes/regenerate`
+(requires `{password, otp}`) replaces the existing set.
+
+**Security properties:**
+
+- TOTP secrets are encrypted at rest with Fernet (AES-128-CBC + HMAC), keyed from the
+  `ENCRYPTION_KEY` environment variable
+- The secret is never exposed again after the initial setup response
+- OTP comparison is constant-time (via `pyotp`/`hmac`)
+- OTP replay is prevented — used codes are tracked in Redis for their validity window
+- Per-user rate limiting and lockout on repeated 2FA failures
+- All 2FA events are audit-logged: `2fa_setup_started`, `2fa_enabled`, `2fa_disabled`, recovery
+  code generation/use, and login challenges/successes
+
+**Data model:** two new tables, applied via Alembic migration:
+
+- `two_factor_auth` — `id`, `user_id`, `encrypted_secret`, `enabled`, `verified_at`,
+  `created_at`, `updated_at`
+- `backup_codes` — `id`, `user_id`, `hashed_code`, `used_at`, `created_at`
 
 ## Testing
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.models.associations import role_permissions, user_roles
 from app.models.permission import Permission
 from app.models.role import Role
+from app.models.two_factor import BackupCode, TwoFactorAuth
 from app.models.user import User
 
 # --- RBAC seed definitions (used by migrations and bootstrap) ---
@@ -27,6 +28,8 @@ __all__ = [
     "User",
     "Role",
     "Permission",
+    "TwoFactorAuth",
+    "BackupCode",
     "user_roles",
     "role_permissions",
     "PERMISSIONS",

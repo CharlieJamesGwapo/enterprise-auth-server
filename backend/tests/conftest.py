@@ -9,6 +9,7 @@ os.environ.setdefault("ENV", "test")
 os.environ.setdefault("COOKIE_SECURE", "false")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-ci-only-not-production-000000")
+os.environ.setdefault("ENCRYPTION_KEY", "_i3FjZl2n-cXVRZCTQE5z5DPJaDhNlXFDBso8tHTClA=")
 
 from collections.abc import AsyncGenerator  # noqa: E402
 

@@ -14,7 +14,7 @@ from app.core.config import settings
 
 _pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
-TokenType = Literal["access", "refresh"]
+TokenType = Literal["access", "refresh", "pre_auth"]
 
 
 def hash_password(password: str) -> str:
