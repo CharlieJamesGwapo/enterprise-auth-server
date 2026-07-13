@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.redis.client import get_redis
 from app.services.rate_limit import RateLimiter
+from app.services.session import SessionService
 from app.services.token import TokenService
 from app.services.two_factor import TwoFactorService
 
@@ -41,6 +42,11 @@ def get_two_factor_service(session: DbSession, redis: RedisClient) -> TwoFactorS
     return TwoFactorService(session, redis)
 
 
+def get_session_service(session: DbSession, redis: RedisClient) -> SessionService:
+    return SessionService(session, redis, TokenService(redis))
+
+
 RateLimiterDep = Annotated[RateLimiter, Depends(get_rate_limiter)]
 TokenServiceDep = Annotated[TokenService, Depends(get_token_service)]
 TwoFactorServiceDep = Annotated[TwoFactorService, Depends(get_two_factor_service)]
+SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]

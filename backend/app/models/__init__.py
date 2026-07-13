@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.models.associations import role_permissions, user_roles
 from app.models.permission import Permission
 from app.models.role import Role
+from app.models.session import Session
 from app.models.two_factor import BackupCode, TwoFactorAuth
 from app.models.user import User
 
@@ -30,6 +31,7 @@ __all__ = [
     "Permission",
     "TwoFactorAuth",
     "BackupCode",
+    "Session",
     "user_roles",
     "role_permissions",
     "PERMISSIONS",

@@ -9,14 +9,15 @@ PostgreSQL data layer with Redis for rate limiting and token state.
 ## Status: Foundation slice
 
 This repository currently contains the **foundation slice** plus **two-factor authentication
-(2FA)**: core authentication, RBAC, security middleware, TOTP-based 2FA, and the supporting
-infrastructure (Docker, CI, migrations). It is meant to be a solid base that later slices build
-on top of. Planned future slices include:
+(2FA)** and **session management**: core authentication, RBAC, security middleware, TOTP-based
+2FA, per-login session tracking with revocation, and the supporting infrastructure (Docker, CI,
+migrations). It is meant to be a solid base that later slices build on top of. Planned future
+slices include:
 
-- Session management (list/revoke active sessions)
-- OAuth / social login providers
-- Transactional email (verification, password reset)
-- Admin API (user/role management beyond the basic RBAC example)
+- Email verification / password reset (email slice)
+- OAuth / social login providers (Google/GitHub)
+- Full user profile + avatar
+- Admin dashboard
 - Audit logs persisted to the database
 - API keys for service-to-service auth
 - Notifications
@@ -84,6 +85,14 @@ settings, the following env vars configure 2FA:
 | `TWO_FA_RATE_LIMIT_PER_MINUTE` | `5` | Rate limit for 2FA verification attempts |
 | `TWO_FA_MAX_FAILURES` | `5` | Number of failed attempts before lockout |
 
+The following env vars configure session management:
+
+| Variable | Default | Description |
+|----------|---------|--------------|
+| `SESSION_IDLE_TIMEOUT_MINUTES` | `30` | Minutes of inactivity before a session is considered expired |
+| `SESSION_ABSOLUTE_EXPIRE_HOURS` | `720` | Maximum lifetime of a session regardless of activity |
+| `SESSION_ACTIVITY_THROTTLE_SECONDS` | `10` | Minimum interval between `last_activity_at` updates, to avoid a write on every request |
+
 Once the stack is up:
 
 - App: http://localhost
@@ -138,6 +147,12 @@ make revision m="add some_table"   # alembic revision --autogenerate
 | POST   | `/api/v1/auth/2fa/disable` | Disable 2FA (requires password + OTP); deletes the secret and all recovery codes |
 | POST   | `/api/v1/auth/2fa/recovery-codes` | Generate recovery codes (requires password + OTP); shown in plaintext once |
 | POST   | `/api/v1/auth/2fa/recovery-codes/regenerate` | Replace recovery codes (requires password + OTP); shown in plaintext once |
+| GET    | `/api/v1/sessions`       | List active sessions for the current user   |
+| GET    | `/api/v1/sessions/{session_id}` | Fetch a single session owned by the current user |
+| DELETE | `/api/v1/sessions/{session_id}` | Revoke a specific session (ownership enforced) |
+| POST   | `/api/v1/sessions/logout` | Revoke the current session and clear session cookies |
+| POST   | `/api/v1/sessions/logout-all` | Revoke every session for the user, including the current one, and clear session cookies |
+| GET    | `/api/v1/users/last-login` | Details of the user's previous login       |
 | GET    | `/api/v1/health`        | Liveness check                              |
 | GET    | `/api/v1/ready`         | Readiness check (verifies DB and Redis connectivity) |
 
@@ -204,6 +219,53 @@ stored server-side only as Argon2 hashes. `POST /api/v1/auth/2fa/recovery-codes`
   `created_at`, `updated_at`
 - `backup_codes` — `id`, `user_id`, `hashed_code`, `used_at`, `created_at`
 
+### Session Management
+
+Every successful login creates an independent session row rather than treating the JWT alone as
+the source of truth. The access and refresh JWTs carry the session id (`sid` claim), and
+`get_current_user` validates the session on every authenticated request — checking that it
+hasn't been revoked, hasn't gone idle, and hasn't hit its absolute expiry — and updates the
+session's activity timestamp. Because of this, server-side revocation takes effect immediately,
+even though the JWT itself is still cryptographically valid until it expires.
+
+**Device and location info:** device, browser, and OS are parsed from the request's User-Agent
+using the `user-agents` library. The client IP is captured (honoring `X-Forwarded-For` when
+present). Country and city are resolved via a pluggable Geo-IP resolver that reads CDN-supplied
+headers such as `CF-IPCountry`; no MaxMind database is bundled, so this is offline-safe and the
+fields are simply `null` when the information isn't available. Known limitation: Brave cannot be
+distinguished from Chrome by User-Agent alone.
+
+**Listing and managing sessions:**
+
+- `GET /api/v1/sessions` returns the current user's active sessions, each including `device`,
+  `device_type`, `browser`, `browser_version`, `os`, `os_version`, `ip`, `country`, `city`,
+  `login_at`, `last_activity`, a `current` flag, and `status`.
+- `GET /api/v1/sessions/{session_id}` fetches a single session owned by the current user.
+- `DELETE /api/v1/sessions/{session_id}` revokes a specific session; ownership is enforced.
+- `POST /api/v1/sessions/logout` revokes the current session and clears the session cookies.
+- `POST /api/v1/sessions/logout-all` revokes every session for the user, including the current
+  one, and clears the session cookies.
+- `GET /api/v1/users/last-login` returns details of the user's previous login:
+  `previous_login_at`, `previous_login_ip`, `previous_device`, `previous_browser`.
+
+**Security properties:**
+
+- Refresh-token rotation keeps the same session bound across renewals — the rotated JTI is
+  stored on the session row rather than starting a new session
+- Revoked or expired sessions blacklist their refresh JTI in Redis
+- A per-session revocation flag is cached in Redis for fast checks on every request
+- Sessions enforce both idle timeout and absolute expiration
+- New-device-login detection emits an audit event (email notification for this is deferred to
+  the email slice)
+- Redis is treated as a cache; PostgreSQL is the authoritative store for session state
+
+**Data model:** one new table, applied via Alembic migration:
+
+- `sessions` — `id`, `user_id`, `refresh_token_id`, `session_uuid`, `device_name`, `device_type`,
+  `browser`, `browser_version`, `operating_system`, `operating_system_version`, `user_agent`,
+  `ip_address`, `country`, `city`, `login_at`, `last_activity_at`, `logout_at`, `expires_at`,
+  `logout_reason`, `is_current`, `is_active`, `request_count`, `created_at`, `updated_at`
+
 ## Testing
 
 ```bash
@@ -227,7 +289,8 @@ enterprise-auth-server/
 │   │   │   └── v1/
 │   │   │       ├── auth.py        # register/login/refresh/logout/me
 │   │   │       ├── health.py      # /health, /ready
-│   │   │       └── users.py       # /users (RBAC-protected)
+│   │   │       ├── sessions.py    # list/get/revoke sessions, logout, logout-all
+│   │   │       └── users.py       # /users (RBAC-protected), /users/last-login
 │   │   ├── core/                  # config, security, cookies, exceptions, logging
 │   │   ├── db/                    # engine/session setup, seed data
 │   │   ├── dependencies/          # DI providers (current user, permissions, db, redis)

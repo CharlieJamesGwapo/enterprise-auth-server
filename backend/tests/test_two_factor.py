@@ -214,7 +214,9 @@ async def test_regenerate_recovery_codes_replaces_old(client):
 
     regen = await client.post(
         "/api/v1/auth/2fa/recovery-codes/regenerate",
-        json={"password": PASSWORD, "otp": otp_at(secret, step=-1)},
+        # A distinct, still-valid code (step +1 stays inside the ±1 window even
+        # if the wall clock advances across a 30s boundary during the test).
+        json={"password": PASSWORD, "otp": otp_at(secret, step=1)},
     )
     assert regen.status_code == 200, regen.text
     new = set(regen.json()["recovery_codes"])

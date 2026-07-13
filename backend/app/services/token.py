@@ -33,15 +33,29 @@ class TokenService:
         )
         return timedelta(days=days)
 
-    def issue_pair(self, user_id: str, remember_me: bool = False) -> TokenPair:
+    def issue_pair(
+        self, user_id: str, remember_me: bool = False, session_id: str | None = None
+    ) -> tuple[TokenPair, str]:
+        """Issue an access+refresh pair bound to ``session_id``.
+
+        Returns (pair, refresh_jti) so the caller can persist the refresh JTI on
+        the session for targeted revocation.
+        """
+        claims = {"sid": session_id} if session_id else {}
         access, _ = create_token(
-            user_id, "access", timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+            user_id,
+            "access",
+            timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+            extra_claims=claims,
         )
         refresh_ttl = self._refresh_ttl(remember_me)
-        refresh, _ = create_token(
-            user_id, "refresh", refresh_ttl, extra_claims={"remember_me": remember_me}
+        refresh, refresh_jti = create_token(
+            user_id,
+            "refresh",
+            refresh_ttl,
+            extra_claims={"remember_me": remember_me, **claims},
         )
-        return TokenPair(access, refresh, refresh_ttl)
+        return TokenPair(access, refresh, refresh_ttl), refresh_jti
 
     def issue_pre_auth(self, user_id: str) -> str:
         """Issue a short-lived token proving password success, pending OTP."""
@@ -73,7 +87,14 @@ class TokenService:
 
         ttl = int(exp - datetime.now(UTC).timestamp())
         if ttl > 0:
-            await self.redis.setex(f"{_BLACKLIST_PREFIX}{jti}", ttl, "1")
+            await self.redis.set(f"{_BLACKLIST_PREFIX}{jti}", "1", ex=ttl)
+
+    async def revoke_jti(self, jti: str, ttl_seconds: int | None = None) -> None:
+        """Blacklist a refresh JTI by value (used when only the JTI is known)."""
+        if not jti:
+            return
+        ttl = ttl_seconds or int(self._refresh_ttl(remember_me=True).total_seconds())
+        await self.redis.set(f"{_BLACKLIST_PREFIX}{jti}", "1", ex=ttl)
 
     def verify_access(self, token: str) -> dict:
         try:
@@ -90,13 +111,16 @@ class TokenService:
             raise AuthError("Refresh token has been revoked.")
         return payload
 
-    async def rotate(self, refresh_token: str) -> tuple[str, TokenPair]:
+    async def rotate(self, refresh_token: str) -> tuple[str, str | None, TokenPair, str]:
         """Validate a refresh token, blacklist it, and issue a fresh pair.
 
-        Returns (user_id, new_pair).
+        Returns (user_id, session_id, new_pair, new_refresh_jti). The session id
+        is carried over so the rotated pair stays bound to the same session.
         """
         payload = await self.verify_refresh(refresh_token)
         await self.revoke(payload)
         user_id = payload["sub"]
+        session_id = payload.get("sid")
         remember_me = bool(payload.get("remember_me", False))
-        return user_id, self.issue_pair(user_id, remember_me=remember_me)
+        pair, refresh_jti = self.issue_pair(user_id, remember_me=remember_me, session_id=session_id)
+        return user_id, session_id, pair, refresh_jti

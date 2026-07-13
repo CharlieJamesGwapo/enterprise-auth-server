@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     TWO_FA_RATE_LIMIT_PER_MINUTE: int = 5
     TWO_FA_MAX_FAILURES: int = 5
 
+    # --- Sessions ---
+    # Session is invalidated if idle longer than this (last activity → now).
+    SESSION_IDLE_TIMEOUT_MINUTES: int = 30
+    # Absolute cap on session lifetime regardless of activity (hours).
+    SESSION_ABSOLUTE_EXPIRE_HOURS: int = 720  # 30 days
+    # Seconds between persisted activity updates (write throttling).
+    SESSION_ACTIVITY_THROTTLE_SECONDS: int = 10
+
     # --- Cookies ---
     COOKIE_SECURE: bool = True
     COOKIE_DOMAIN: str | None = None

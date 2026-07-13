@@ -15,6 +15,7 @@ from app.dependencies.auth import CurrentUser, verify_csrf
 from app.dependencies.providers import (
     DbSession,
     RateLimiterDep,
+    SessionServiceDep,
     TokenServiceDep,
     TwoFactorServiceDep,
 )
@@ -49,8 +50,29 @@ async def _auth_rate_limit(request: Request, limiter: RateLimiterDep) -> None:
     await limiter.hit(f"auth:{client_ip(request)}", settings.AUTH_RATE_LIMIT_PER_MINUTE, 60)
 
 
-def _finalize_login(response: Response, tokens: TokenServiceDep, user, remember_me: bool):
-    pair = tokens.issue_pair(str(user.id), remember_me=remember_me)
+async def _finalize_login(
+    request: Request,
+    response: Response,
+    tokens: TokenServiceDep,
+    sessions: SessionServiceDep,
+    user,
+    remember_me: bool,
+) -> AuthResponse:
+    """Issue a session: mint tokens bound to a new session id and persist it."""
+    session_uuid = uuid.uuid4()
+    pair, refresh_jti = tokens.issue_pair(
+        str(user.id), remember_me=remember_me, session_id=str(session_uuid)
+    )
+    await sessions.create_session(
+        user=user,
+        session_uuid=session_uuid,
+        refresh_jti=refresh_jti,
+        remember_me=remember_me,
+        ip=client_ip(request),
+        user_agent=request.headers.get("user-agent", ""),
+        headers=dict(request.headers),
+    )
+    await sessions.session.commit()
     csrf = generate_csrf_token()
     set_auth_cookies(response, pair, csrf)
     return AuthResponse(user=UserRead.from_model(user), csrf_token=csrf)
@@ -64,15 +86,17 @@ def _finalize_login(response: Response, tokens: TokenServiceDep, user, remember_
 )
 async def register(
     payload: RegisterRequest,
+    request: Request,
     response: Response,
     session: DbSession,
     limiter: RateLimiterDep,
     tokens: TokenServiceDep,
+    sessions: SessionServiceDep,
 ) -> AuthResponse:
     service = AuthService(session, limiter)
     user = await service.register(payload.email, payload.password, payload.full_name)
-    await session.commit()
-    return _finalize_login(response, tokens, user, remember_me=False)
+    await session.flush()
+    return await _finalize_login(request, response, tokens, sessions, user, remember_me=False)
 
 
 @router.post(
@@ -88,11 +112,13 @@ async def register(
 )
 async def login(
     payload: LoginRequest,
+    request: Request,
     response: Response,
     session: DbSession,
     limiter: RateLimiterDep,
     tokens: TokenServiceDep,
     twofa: TwoFactorServiceDep,
+    sessions: SessionServiceDep,
 ) -> AuthResponse | LoginChallengeResponse:
     service = AuthService(session, limiter)
     user = await service.authenticate(payload.email, payload.password)
@@ -103,16 +129,20 @@ async def login(
         audit("login_2fa_challenge", user_id=str(user.id))
         return LoginChallengeResponse(pre_auth_token=tokens.issue_pre_auth(str(user.id)))
 
-    return _finalize_login(response, tokens, user, remember_me=payload.remember_me)
+    return await _finalize_login(
+        request, response, tokens, sessions, user, remember_me=payload.remember_me
+    )
 
 
 @router.post("/login/otp", response_model=AuthResponse, dependencies=[Depends(_auth_rate_limit)])
 async def login_otp(
     payload: OtpLoginRequest,
+    request: Request,
     response: Response,
     session: DbSession,
     tokens: TokenServiceDep,
     twofa: TwoFactorServiceDep,
+    sessions: SessionServiceDep,
 ) -> AuthResponse:
     """Complete a 2FA login by exchanging the pre-auth token + OTP for a session."""
     user_id = tokens.verify_pre_auth(payload.pre_auth_token)
@@ -120,7 +150,9 @@ async def login_otp(
     await twofa.verify_totp(user, payload.otp)
     await session.commit()
     audit("login_2fa_otp_success", user_id=str(user.id))
-    return _finalize_login(response, tokens, user, remember_me=payload.remember_me)
+    return await _finalize_login(
+        request, response, tokens, sessions, user, remember_me=payload.remember_me
+    )
 
 
 @router.post(
@@ -130,10 +162,12 @@ async def login_otp(
 )
 async def login_recovery_code(
     payload: RecoveryLoginRequest,
+    request: Request,
     response: Response,
     session: DbSession,
     tokens: TokenServiceDep,
     twofa: TwoFactorServiceDep,
+    sessions: SessionServiceDep,
 ) -> AuthResponse:
     """Complete a 2FA login using a one-time recovery code."""
     user_id = tokens.verify_pre_auth(payload.pre_auth_token)
@@ -141,7 +175,9 @@ async def login_recovery_code(
     await twofa.consume_recovery_code(user, payload.recovery_code)
     await session.commit()
     audit("login_2fa_recovery_success", user_id=str(user.id))
-    return _finalize_login(response, tokens, user, remember_me=payload.remember_me)
+    return await _finalize_login(
+        request, response, tokens, sessions, user, remember_me=payload.remember_me
+    )
 
 
 @router.post("/refresh", response_model=Message)
@@ -149,23 +185,39 @@ async def refresh(
     request: Request,
     response: Response,
     tokens: TokenServiceDep,
+    sessions: SessionServiceDep,
 ) -> Message:
     token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
     if not token:
         raise AuthError("Missing refresh token.")
-    _user_id, pair = await tokens.rotate(token)
+    user_id, sid, pair, refresh_jti = await tokens.rotate(token)
+    if sid:
+        # Keep the session bound to the rotated refresh token (also enforces that
+        # the session is still active — a revoked session cannot refresh).
+        await sessions.rebind_refresh(uuid.UUID(user_id), uuid.UUID(sid), refresh_jti)
     csrf = generate_csrf_token()
     set_auth_cookies(response, pair, csrf)
     return Message(detail="refreshed")
 
 
 @router.post("/logout", response_model=Message, dependencies=[Depends(verify_csrf)])
-async def logout(request: Request, response: Response, tokens: TokenServiceDep) -> Message:
+async def logout(
+    request: Request,
+    response: Response,
+    tokens: TokenServiceDep,
+    sessions: SessionServiceDep,
+) -> Message:
     token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
     if token:
         try:
             payload = await tokens.verify_refresh(token)
             await tokens.revoke(payload)
+            sid = payload.get("sid")
+            if sid:
+                record = await sessions.repo.get_by_uuid(uuid.UUID(sid))
+                if record is not None and record.is_active:
+                    await sessions.revoke(record, reason="logout")
+                    await sessions.session.commit()
         except AuthError:
             pass  # Already invalid — clearing cookies is enough.
     clear_auth_cookies(response)
