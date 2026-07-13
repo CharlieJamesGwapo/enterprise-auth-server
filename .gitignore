@@ -1,0 +1,32 @@
+# Byte-compiled / cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment variables (keep the example file)
+.env
+!.env.example
+
+# Packaging
+*.egg-info/
+dist/
+build/
+
+# Test / lint / type-check caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Databases
+*.sqlite3
+
+# OS
+.DS_Store
+
+# uv.lock is committed intentionally for reproducible builds - do not ignore it.
