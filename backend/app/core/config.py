@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     PASSWORD_RESET_EXPIRE_MINUTES: int = 30
     EMAIL_CHANGE_EXPIRE_HOURS: int = 24
 
+    # --- OAuth ---
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
+    # Public base URL the provider redirects back to (callback path is appended).
+    OAUTH_REDIRECT_BASE_URL: str = "http://localhost:8000"
+    OAUTH_STATE_TTL_SECONDS: int = 600
+
     # --- Sessions ---
     # Session is invalidated if idle longer than this (last activity → now).
     SESSION_IDLE_TIMEOUT_MINUTES: int = 30

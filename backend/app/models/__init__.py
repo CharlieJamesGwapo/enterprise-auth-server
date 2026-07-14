@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.models.associations import role_permissions, user_roles
 from app.models.email_token import EmailToken
+from app.models.oauth_account import OAuthAccount
 from app.models.permission import Permission
 from app.models.role import Role
 from app.models.session import Session
@@ -34,6 +35,7 @@ __all__ = [
     "BackupCode",
     "Session",
     "EmailToken",
+    "OAuthAccount",
     "user_roles",
     "role_permissions",
     "PERMISSIONS",

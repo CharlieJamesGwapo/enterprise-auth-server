@@ -9,13 +9,13 @@ PostgreSQL data layer with Redis for rate limiting and token state.
 ## Status: Foundation slice
 
 This repository currently contains the **foundation slice** plus **two-factor authentication
-(2FA)**, **session management**, and **email & notifications**: core authentication, RBAC,
-security middleware, TOTP-based 2FA, per-login session tracking with revocation, transactional
-email (verification, password reset, change-email, new-device alerts), and the supporting
-infrastructure (Docker, CI, migrations). It is meant to be a solid base that later slices build
-on top of. Planned future slices include:
+(2FA)**, **session management**, **email & notifications**, and **OAuth (Google & GitHub)**: core
+authentication, RBAC, security middleware, TOTP-based 2FA, per-login session tracking with
+revocation, transactional email (verification, password reset, change-email, new-device alerts),
+OAuth2 login/linking with Google and GitHub, and the supporting infrastructure (Docker, CI,
+migrations). It is meant to be a solid base that later slices build on top of. Planned future
+slices include:
 
-- OAuth / social login providers (Google/GitHub)
 - Full user profile + avatar, change-password, delete-account
 - Admin dashboard
 - Audit logs persisted to the database
@@ -113,6 +113,17 @@ The following env vars configure transactional email:
 
 For local dev with `EMAIL_BACKEND=smtp`, an SMTP catcher such as [MailHog](https://github.com/mailhog/MailHog) is a convenient way to view sent emails without a real mail provider; it's an optional dev tool and isn't wired into `docker-compose.yml`.
 
+The following env vars configure OAuth login:
+
+| Variable | Default | Description |
+|----------|---------|--------------|
+| `GOOGLE_CLIENT_ID` | — | Google OAuth2 client id; Google is inactive until this and the secret are set |
+| `GOOGLE_CLIENT_SECRET` | — | Google OAuth2 client secret |
+| `GITHUB_CLIENT_ID` | — | GitHub OAuth2 client id; GitHub is inactive until this and the secret are set |
+| `GITHUB_CLIENT_SECRET` | — | GitHub OAuth2 client secret |
+| `OAUTH_REDIRECT_BASE_URL` | `http://localhost:8000` | Public base URL the provider redirects back to; the callback path is appended |
+| `OAUTH_STATE_TTL_SECONDS` | `600` | Lifetime of the CSRF `state` value stored in Redis during the OAuth handshake |
+
 Once the stack is up:
 
 - App: http://localhost
@@ -179,6 +190,11 @@ make revision m="add some_table"   # alembic revision --autogenerate
 | POST   | `/api/v1/auth/reset-password` | Set a new password using a reset token; sends a password-changed alert |
 | POST   | `/api/v1/auth/change-email` | Request an email change (requires authentication + password); sends a confirmation link to the new address |
 | POST   | `/api/v1/auth/confirm-email-change` | Apply a pending email change using the token from the confirmation email |
+| GET    | `/api/v1/auth/oauth/providers` | List configured OAuth providers             |
+| GET    | `/api/v1/auth/oauth/{provider}/authorize` | 307 redirect to the provider to begin OAuth login |
+| GET    | `/api/v1/auth/oauth/{provider}/link` | Authenticated; 307 redirect to begin linking the provider to the current account |
+| GET    | `/api/v1/auth/oauth/{provider}/callback` | Provider redirect target; exchanges the code, then logs in or confirms a link |
+| GET    | `/api/v1/auth/oauth/links` | Authenticated; list the current user's linked OAuth accounts |
 | GET    | `/api/v1/health`        | Liveness check                              |
 | GET    | `/api/v1/ready`         | Readiness check (verifies DB and Redis connectivity) |
 
@@ -333,6 +349,51 @@ outbox used by the test suite to assert on sent mail). Emails are sent on FastAP
 - `email_tokens` — `id`, `user_id`, `token_hash`, `purpose`, `new_email`, `expires_at`,
   `used_at`, `created_at`, `updated_at`
 
+### OAuth (Google & GitHub)
+
+OAuth2 authorization-code login is supported for Google and GitHub. Providers are pluggable
+behind a common abstraction, and a provider is only active once its client id and secret are
+configured — `GET /api/v1/auth/oauth/providers` reflects which ones are currently active.
+
+**Login flow:**
+
+1. `GET /api/v1/auth/oauth/{provider}/authorize` redirects (307) to the provider with a CSRF
+   `state` value stored in Redis with a short TTL (`OAUTH_STATE_TTL_SECONDS`). For Google, PKCE
+   (S256) is also used.
+2. The provider redirects back to `GET /api/v1/auth/oauth/{provider}/callback`, which validates
+   `state`, exchanges the authorization code, and fetches the provider's account/email info.
+3. Account resolution, in order:
+   - If the provider account is already linked, log that user in.
+   - Else if the provider email matches an existing user, auto-link the provider account to it
+     and log in.
+   - Else create a new account — `is_verified` follows the provider's `email_verified` flag, and
+     the account is assigned the default `user` role.
+4. GitHub accounts without a public email fall back to the primary verified email via GitHub's
+   emails API; if no email is available at all, the login is rejected.
+5. On success, the same session is issued as a password login (httpOnly cookies + CSRF + a
+   session row), so 2FA, session tracking, and refresh rotation all apply uniformly, and
+   new-device alerts fire as normal (see [Session Management](#session-management) and
+   [Email & Notifications](#email--notifications) above).
+
+**Account linking:**
+
+- An authenticated user can call `GET /api/v1/auth/oauth/{provider}/link` to redirect (307)
+  through the same provider flow and link that provider to their existing account.
+- Linking a provider account that's already tied to a different user is rejected with `409`.
+- `GET /api/v1/auth/oauth/links` lists the current user's linked provider accounts.
+
+**Security properties:**
+
+- CSRF `state` is single-use, stored in Redis with a short TTL, and required on every callback
+- PKCE (S256) is used for Google's authorization-code exchange
+- Only providers with both a client id and secret configured are active
+- Linking is rejected (`409`) if the provider account already belongs to another user
+
+**Data model:** one new table, applied via Alembic migration:
+
+- `oauth_accounts` — `id`, `user_id`, `provider`, `provider_account_id`, `email`, `created_at`,
+  `updated_at` (unique on `provider` + `provider_account_id`)
+
 ## Testing
 
 ```bash
@@ -357,6 +418,7 @@ enterprise-auth-server/
 │   │   │       ├── auth.py        # register/login/refresh/logout/me, 2FA, email verification,
 │   │   │       │                  # password reset, change-email
 │   │   │       ├── health.py      # /health, /ready
+│   │   │       ├── oauth.py       # OAuth providers, authorize/link/callback, linked accounts
 │   │   │       ├── sessions.py    # list/get/revoke sessions, logout, logout-all
 │   │   │       └── users.py       # /users (RBAC-protected), /users/last-login
 │   │   ├── core/                  # config, security, cookies, exceptions, logging

@@ -14,6 +14,7 @@ from app.redis.client import get_redis
 from app.services.email import get_email_backend
 from app.services.email_account import EmailAccountService
 from app.services.notifications import NotificationService
+from app.services.oauth.service import OAuthService
 from app.services.rate_limit import RateLimiter
 from app.services.session import SessionService
 from app.services.token import TokenService
@@ -53,6 +54,10 @@ def get_notification_service() -> NotificationService:
     return NotificationService(get_email_backend())
 
 
+def get_oauth_service(session: DbSession, redis: RedisClient) -> OAuthService:
+    return OAuthService(session, redis)
+
+
 def get_email_account_service(session: DbSession) -> EmailAccountService:
     return EmailAccountService(session, NotificationService(get_email_backend()))
 
@@ -63,3 +68,4 @@ TwoFactorServiceDep = Annotated[TwoFactorService, Depends(get_two_factor_service
 SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]
 NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
 EmailAccountServiceDep = Annotated[EmailAccountService, Depends(get_email_account_service)]
+OAuthServiceDep = Annotated[OAuthService, Depends(get_oauth_service)]
