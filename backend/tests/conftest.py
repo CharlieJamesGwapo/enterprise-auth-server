@@ -10,10 +10,12 @@ os.environ.setdefault("COOKIE_SECURE", "false")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-ci-only-not-production-000000")
 os.environ.setdefault("ENCRYPTION_KEY", "_i3FjZl2n-cXVRZCTQE5z5DPJaDhNlXFDBso8tHTClA=")
+os.environ.setdefault("EMAIL_BACKEND", "memory")
 
 from collections.abc import AsyncGenerator  # noqa: E402
 
 import fakeredis.aioredis  # noqa: E402
+import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
@@ -28,6 +30,16 @@ from app.db.base import Base  # noqa: E402
 from app.db.seed import seed_rbac  # noqa: E402
 from app.dependencies.providers import db_dependency, redis_dependency  # noqa: E402
 from app.main import app  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _clear_outbox():
+    """Reset the in-memory email outbox before each test."""
+    from app.services.email.backends import OUTBOX
+
+    OUTBOX.clear()
+    yield
+    OUTBOX.clear()
 
 
 @pytest_asyncio.fixture

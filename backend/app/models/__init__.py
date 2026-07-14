@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.models.associations import role_permissions, user_roles
+from app.models.email_token import EmailToken
 from app.models.permission import Permission
 from app.models.role import Role
 from app.models.session import Session
@@ -32,6 +33,7 @@ __all__ = [
     "TwoFactorAuth",
     "BackupCode",
     "Session",
+    "EmailToken",
     "user_roles",
     "role_permissions",
     "PERMISSIONS",

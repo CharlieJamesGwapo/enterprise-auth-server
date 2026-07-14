@@ -11,6 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.redis.client import get_redis
+from app.services.email import get_email_backend
+from app.services.email_account import EmailAccountService
+from app.services.notifications import NotificationService
 from app.services.rate_limit import RateLimiter
 from app.services.session import SessionService
 from app.services.token import TokenService
@@ -46,7 +49,17 @@ def get_session_service(session: DbSession, redis: RedisClient) -> SessionServic
     return SessionService(session, redis, TokenService(redis))
 
 
+def get_notification_service() -> NotificationService:
+    return NotificationService(get_email_backend())
+
+
+def get_email_account_service(session: DbSession) -> EmailAccountService:
+    return EmailAccountService(session, NotificationService(get_email_backend()))
+
+
 RateLimiterDep = Annotated[RateLimiter, Depends(get_rate_limiter)]
 TokenServiceDep = Annotated[TokenService, Depends(get_token_service)]
 TwoFactorServiceDep = Annotated[TwoFactorService, Depends(get_two_factor_service)]
 SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]
+NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
+EmailAccountServiceDep = Annotated[EmailAccountService, Depends(get_email_account_service)]

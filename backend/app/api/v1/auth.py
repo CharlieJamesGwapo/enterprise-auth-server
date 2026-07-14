@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 
 from app.core.audit import audit
 from app.core.config import settings
@@ -14,6 +14,8 @@ from app.core.security import generate_csrf_token
 from app.dependencies.auth import CurrentUser, verify_csrf
 from app.dependencies.providers import (
     DbSession,
+    EmailAccountServiceDep,
+    NotificationServiceDep,
     RateLimiterDep,
     SessionServiceDep,
     TokenServiceDep,
@@ -55,6 +57,8 @@ async def _finalize_login(
     response: Response,
     tokens: TokenServiceDep,
     sessions: SessionServiceDep,
+    notifications: NotificationServiceDep,
+    background: BackgroundTasks,
     user,
     remember_me: bool,
 ) -> AuthResponse:
@@ -63,7 +67,7 @@ async def _finalize_login(
     pair, refresh_jti = tokens.issue_pair(
         str(user.id), remember_me=remember_me, session_id=str(session_uuid)
     )
-    await sessions.create_session(
+    record, is_new_device = await sessions.create_session(
         user=user,
         session_uuid=session_uuid,
         refresh_jti=refresh_jti,
@@ -73,6 +77,14 @@ async def _finalize_login(
         headers=dict(request.headers),
     )
     await sessions.session.commit()
+    if is_new_device:
+        background.add_task(
+            notifications.send_new_device_alert,
+            user.email,
+            device=record.device_name,
+            browser=record.browser,
+            ip=record.ip_address,
+        )
     csrf = generate_csrf_token()
     set_auth_cookies(response, pair, csrf)
     return AuthResponse(user=UserRead.from_model(user), csrf_token=csrf)
@@ -88,15 +100,30 @@ async def register(
     payload: RegisterRequest,
     request: Request,
     response: Response,
+    background: BackgroundTasks,
     session: DbSession,
     limiter: RateLimiterDep,
     tokens: TokenServiceDep,
     sessions: SessionServiceDep,
+    notifications: NotificationServiceDep,
+    email_service: EmailAccountServiceDep,
 ) -> AuthResponse:
     service = AuthService(session, limiter)
     user = await service.register(payload.email, payload.password, payload.full_name)
     await session.flush()
-    return await _finalize_login(request, response, tokens, sessions, user, remember_me=False)
+    result = await _finalize_login(
+        request,
+        response,
+        tokens,
+        sessions,
+        notifications,
+        background,
+        user,
+        remember_me=False,
+    )
+    await email_service.send_signup_emails(user, background)
+    await session.commit()
+    return result
 
 
 @router.post(
@@ -114,11 +141,13 @@ async def login(
     payload: LoginRequest,
     request: Request,
     response: Response,
+    background: BackgroundTasks,
     session: DbSession,
     limiter: RateLimiterDep,
     tokens: TokenServiceDep,
     twofa: TwoFactorServiceDep,
     sessions: SessionServiceDep,
+    notifications: NotificationServiceDep,
 ) -> AuthResponse | LoginChallengeResponse:
     service = AuthService(session, limiter)
     user = await service.authenticate(payload.email, payload.password)
@@ -130,7 +159,14 @@ async def login(
         return LoginChallengeResponse(pre_auth_token=tokens.issue_pre_auth(str(user.id)))
 
     return await _finalize_login(
-        request, response, tokens, sessions, user, remember_me=payload.remember_me
+        request,
+        response,
+        tokens,
+        sessions,
+        notifications,
+        background,
+        user,
+        remember_me=payload.remember_me,
     )
 
 
@@ -139,10 +175,12 @@ async def login_otp(
     payload: OtpLoginRequest,
     request: Request,
     response: Response,
+    background: BackgroundTasks,
     session: DbSession,
     tokens: TokenServiceDep,
     twofa: TwoFactorServiceDep,
     sessions: SessionServiceDep,
+    notifications: NotificationServiceDep,
 ) -> AuthResponse:
     """Complete a 2FA login by exchanging the pre-auth token + OTP for a session."""
     user_id = tokens.verify_pre_auth(payload.pre_auth_token)
@@ -151,7 +189,14 @@ async def login_otp(
     await session.commit()
     audit("login_2fa_otp_success", user_id=str(user.id))
     return await _finalize_login(
-        request, response, tokens, sessions, user, remember_me=payload.remember_me
+        request,
+        response,
+        tokens,
+        sessions,
+        notifications,
+        background,
+        user,
+        remember_me=payload.remember_me,
     )
 
 
@@ -164,10 +209,12 @@ async def login_recovery_code(
     payload: RecoveryLoginRequest,
     request: Request,
     response: Response,
+    background: BackgroundTasks,
     session: DbSession,
     tokens: TokenServiceDep,
     twofa: TwoFactorServiceDep,
     sessions: SessionServiceDep,
+    notifications: NotificationServiceDep,
 ) -> AuthResponse:
     """Complete a 2FA login using a one-time recovery code."""
     user_id = tokens.verify_pre_auth(payload.pre_auth_token)
@@ -176,7 +223,14 @@ async def login_recovery_code(
     await session.commit()
     audit("login_2fa_recovery_success", user_id=str(user.id))
     return await _finalize_login(
-        request, response, tokens, sessions, user, remember_me=payload.remember_me
+        request,
+        response,
+        tokens,
+        sessions,
+        notifications,
+        background,
+        user,
+        remember_me=payload.remember_me,
     )
 
 

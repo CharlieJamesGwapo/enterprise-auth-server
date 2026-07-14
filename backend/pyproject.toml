@@ -24,6 +24,7 @@ dependencies = [
     "qrcode>=8.0",
     "pillow>=11.0",
     "user-agents>=2.2",
+    "aiosmtplib>=3.0",
 ]
 
 [dependency-groups]

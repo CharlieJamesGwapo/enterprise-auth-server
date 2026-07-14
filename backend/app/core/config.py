@@ -38,6 +38,21 @@ class Settings(BaseSettings):
     TWO_FA_RATE_LIMIT_PER_MINUTE: int = 5
     TWO_FA_MAX_FAILURES: int = 5
 
+    # --- Email ---
+    EMAIL_BACKEND: Literal["smtp", "console", "memory"] = "console"
+    EMAIL_HOST: str = "localhost"
+    EMAIL_PORT: int = 1025  # MailHog default in docker compose
+    EMAIL_USERNAME: str = ""
+    EMAIL_PASSWORD: str = ""
+    EMAIL_USE_TLS: bool = False
+    EMAIL_FROM: str = "no-reply@enterprise-auth.local"
+    EMAIL_FROM_NAME: str = "Enterprise Auth Server"
+    # Base URL used to build verification / reset links in emails.
+    APP_BASE_URL: str = "http://localhost:3000"
+    EMAIL_VERIFICATION_EXPIRE_HOURS: int = 24
+    PASSWORD_RESET_EXPIRE_MINUTES: int = 30
+    EMAIL_CHANGE_EXPIRE_HOURS: int = 24
+
     # --- Sessions ---
     # Session is invalidated if idle longer than this (last activity → now).
     SESSION_IDLE_TIMEOUT_MINUTES: int = 30

@@ -25,6 +25,9 @@ class AuthService:
         self.rate_limiter = rate_limiter
 
     async def register(self, email: str, password: str, full_name: str = "") -> User:
+        from app.core.passwords import validate_password_strength
+
+        validate_password_strength(password)
         if await self.users.email_exists(email):
             raise ConflictError("A user with this email already exists.")
         user = User(

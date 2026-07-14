@@ -35,7 +35,7 @@ class RateLimiter:
         if count == 1:
             await self.redis.expire(key, settings.LOCKOUT_SECONDS)
         if count >= settings.MAX_FAILED_LOGINS:
-            await self.redis.setex(self._lockout_key(identifier), settings.LOCKOUT_SECONDS, "1")
+            await self.redis.set(self._lockout_key(identifier), "1", ex=settings.LOCKOUT_SECONDS)
             await self.redis.delete(key)
 
     async def clear_failures(self, identifier: str) -> None:

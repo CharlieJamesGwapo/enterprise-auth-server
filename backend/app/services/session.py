@@ -64,7 +64,8 @@ class SessionService:
         ip: str,
         user_agent: str,
         headers: dict[str, str],
-    ) -> Session:
+    ) -> tuple[Session, bool]:
+        """Create a session. Returns (session, is_new_device)."""
         device = parse_user_agent(user_agent)
         geo = resolve_location(ip, headers)
         now = _now()
@@ -110,7 +111,7 @@ class SessionService:
                 browser=device.browser,
                 country=geo.country,
             )
-        return record
+        return record, is_new_device
 
     # ------------------------------------------------------- validate/touch
     async def validate_and_touch(self, session_uuid: uuid.UUID, user_id: uuid.UUID) -> Session:

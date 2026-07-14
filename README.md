@@ -9,18 +9,19 @@ PostgreSQL data layer with Redis for rate limiting and token state.
 ## Status: Foundation slice
 
 This repository currently contains the **foundation slice** plus **two-factor authentication
-(2FA)** and **session management**: core authentication, RBAC, security middleware, TOTP-based
-2FA, per-login session tracking with revocation, and the supporting infrastructure (Docker, CI,
-migrations). It is meant to be a solid base that later slices build on top of. Planned future
-slices include:
+(2FA)**, **session management**, and **email & notifications**: core authentication, RBAC,
+security middleware, TOTP-based 2FA, per-login session tracking with revocation, transactional
+email (verification, password reset, change-email, new-device alerts), and the supporting
+infrastructure (Docker, CI, migrations). It is meant to be a solid base that later slices build
+on top of. Planned future slices include:
 
-- Email verification / password reset (email slice)
 - OAuth / social login providers (Google/GitHub)
-- Full user profile + avatar
+- Full user profile + avatar, change-password, delete-account
 - Admin dashboard
 - Audit logs persisted to the database
 - API keys for service-to-service auth
-- Notifications
+- Notifications beyond email
+- Pagination / filtering
 
 None of the above are implemented yet — this README describes only what exists today.
 
@@ -93,6 +94,25 @@ The following env vars configure session management:
 | `SESSION_ABSOLUTE_EXPIRE_HOURS` | `720` | Maximum lifetime of a session regardless of activity |
 | `SESSION_ACTIVITY_THROTTLE_SECONDS` | `10` | Minimum interval between `last_activity_at` updates, to avoid a write on every request |
 
+The following env vars configure transactional email:
+
+| Variable | Default | Description |
+|----------|---------|--------------|
+| `EMAIL_BACKEND` | `console` | Delivery backend: `smtp` (real delivery via `aiosmtplib`), `console` (logs the message, default for local dev), or `memory` (in-process outbox used by the test suite) |
+| `EMAIL_HOST` | `localhost` | SMTP host (used when `EMAIL_BACKEND=smtp`) |
+| `EMAIL_PORT` | `1025` | SMTP port (used when `EMAIL_BACKEND=smtp`) |
+| `EMAIL_USERNAME` | — | SMTP auth username |
+| `EMAIL_PASSWORD` | — | SMTP auth password |
+| `EMAIL_USE_TLS` | `false` | Whether to use TLS for the SMTP connection |
+| `EMAIL_FROM` | `no-reply@enterprise-auth.local` | From address on outgoing emails |
+| `EMAIL_FROM_NAME` | `Enterprise Auth Server` | From display name on outgoing emails |
+| `APP_BASE_URL` | `http://localhost:3000` | Base URL used to build links embedded in emails |
+| `EMAIL_VERIFICATION_EXPIRE_HOURS` | `24` | Lifetime of an email verification token |
+| `PASSWORD_RESET_EXPIRE_MINUTES` | `30` | Lifetime of a password reset token |
+| `EMAIL_CHANGE_EXPIRE_HOURS` | `24` | Lifetime of an email-change confirmation token |
+
+For local dev with `EMAIL_BACKEND=smtp`, an SMTP catcher such as [MailHog](https://github.com/mailhog/MailHog) is a convenient way to view sent emails without a real mail provider; it's an optional dev tool and isn't wired into `docker-compose.yml`.
+
 Once the stack is up:
 
 - App: http://localhost
@@ -153,12 +173,21 @@ make revision m="add some_table"   # alembic revision --autogenerate
 | POST   | `/api/v1/sessions/logout` | Revoke the current session and clear session cookies |
 | POST   | `/api/v1/sessions/logout-all` | Revoke every session for the user, including the current one, and clear session cookies |
 | GET    | `/api/v1/users/last-login` | Details of the user's previous login       |
+| POST   | `/api/v1/auth/verify-email` | Confirm an email address using the token from the verification email |
+| POST   | `/api/v1/auth/resend-verification` | Resend the verification email (requires authentication) |
+| POST   | `/api/v1/auth/forgot-password` | Request a password reset email; always returns 200 to avoid account enumeration |
+| POST   | `/api/v1/auth/reset-password` | Set a new password using a reset token; sends a password-changed alert |
+| POST   | `/api/v1/auth/change-email` | Request an email change (requires authentication + password); sends a confirmation link to the new address |
+| POST   | `/api/v1/auth/confirm-email-change` | Apply a pending email change using the token from the confirmation email |
 | GET    | `/api/v1/health`        | Liveness check                              |
 | GET    | `/api/v1/ready`         | Readiness check (verifies DB and Redis connectivity) |
 
 ## Security
 
 - **Password hashing:** Argon2id
+- **Password strength policy:** enforced on registration and password reset — minimum 8
+  characters, requires a lowercase letter, an uppercase letter, a digit, and a symbol, and
+  rejects a small denylist of common passwords
 - **Token delivery:** access and refresh JWTs are set as httpOnly, Secure cookies (never
   exposed to client-side JavaScript)
 - **Refresh token rotation:** each refresh issues a new refresh token; used/superseded tokens
@@ -255,8 +284,8 @@ distinguished from Chrome by User-Agent alone.
 - Revoked or expired sessions blacklist their refresh JTI in Redis
 - A per-session revocation flag is cached in Redis for fast checks on every request
 - Sessions enforce both idle timeout and absolute expiration
-- New-device-login detection emits an audit event (email notification for this is deferred to
-  the email slice)
+- New-device-login detection emits an audit event and triggers a new-device sign-in alert email
+  (see [Email & Notifications](#email--notifications) below)
 - Redis is treated as a cache; PostgreSQL is the authoritative store for session state
 
 **Data model:** one new table, applied via Alembic migration:
@@ -265,6 +294,44 @@ distinguished from Chrome by User-Agent alone.
   `browser`, `browser_version`, `operating_system`, `operating_system_version`, `user_agent`,
   `ip_address`, `country`, `city`, `login_at`, `last_activity_at`, `logout_at`, `expires_at`,
   `logout_reason`, `is_current`, `is_active`, `request_count`, `created_at`, `updated_at`
+
+### Email & Notifications
+
+Transactional email is implemented with pluggable backends selected by `EMAIL_BACKEND`: `smtp`
+(real delivery via `aiosmtplib` — e.g. MailHog in dev, a real SMTP provider in prod), `console`
+(logs the message instead of sending it; default for local dev), and `memory` (an in-process
+outbox used by the test suite to assert on sent mail). Emails are sent on FastAPI
+`BackgroundTasks`, so request/response cycles never block on SMTP.
+
+**Emails sent:**
+
+- Welcome email, on registration
+- Email verification, on registration and on resend
+- Password reset
+- Password-changed notification, after a successful reset
+- Email-change confirmation, sent to the new address
+- New-device sign-in alert, wired from the session slice's new-device detection
+
+**Endpoints:** see [API endpoints](#api-endpoints) — `verify-email`, `resend-verification`,
+`forgot-password`, `reset-password`, `change-email`, and `confirm-email-change`.
+
+**Security properties:**
+
+- Email tokens are single-use, high-entropy (`secrets.token_urlsafe`), and stored server-side
+  only as SHA-256 hashes — the raw token appears only in the email itself
+- Tokens expire: verification after `EMAIL_VERIFICATION_EXPIRE_HOURS` (24h), password reset
+  after `PASSWORD_RESET_EXPIRE_MINUTES` (30m), email-change after `EMAIL_CHANGE_EXPIRE_HOURS`
+  (24h)
+- Only one active token per purpose — a new request supersedes the previous one
+- `POST /api/v1/auth/forgot-password` is enumeration-safe: it always returns 200 regardless of
+  whether the account exists
+- `POST /api/v1/auth/confirm-email-change` re-checks that the new address is still available at
+  confirmation time, not just at request time
+
+**Data model:** one new table, applied via Alembic migration:
+
+- `email_tokens` — `id`, `user_id`, `token_hash`, `purpose`, `new_email`, `expires_at`,
+  `used_at`, `created_at`, `updated_at`
 
 ## Testing
 
@@ -287,7 +354,8 @@ enterprise-auth-server/
 │   │   ├── api/
 │   │   │   ├── router.py          # aggregates v1 routers
 │   │   │   └── v1/
-│   │   │       ├── auth.py        # register/login/refresh/logout/me
+│   │   │       ├── auth.py        # register/login/refresh/logout/me, 2FA, email verification,
+│   │   │       │                  # password reset, change-email
 │   │   │       ├── health.py      # /health, /ready
 │   │   │       ├── sessions.py    # list/get/revoke sessions, logout, logout-all
 │   │   │       └── users.py       # /users (RBAC-protected), /users/last-login
