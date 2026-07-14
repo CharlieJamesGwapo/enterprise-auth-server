@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.config import settings
 from app.core.useragent import parse_user_agent
 
 pytestmark = pytest.mark.asyncio
@@ -116,6 +117,20 @@ async def test_delete_specific_session(client):
     remaining = (await client.get("/api/v1/sessions")).json()
     assert len(remaining) == 1
     assert remaining[0]["current"] is True
+
+
+async def test_delete_session_with_mismatched_csrf_forbidden(client):
+    await register(client)
+    sessions = (await client.get("/api/v1/sessions")).json()
+    sid = sessions[0]["session_id"]
+    resp = await client.delete(
+        f"/api/v1/sessions/{sid}", headers={settings.CSRF_HEADER_NAME: "wrong-token"}
+    )
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "permission_denied"
+    # Session was not revoked.
+    remaining = (await client.get("/api/v1/sessions")).json()
+    assert len(remaining) == 1
 
 
 async def test_logout_all_devices(client):

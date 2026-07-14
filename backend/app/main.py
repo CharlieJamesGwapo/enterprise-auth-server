@@ -28,13 +28,16 @@ async def lifespan(_: FastAPI):
 
 
 def create_app() -> FastAPI:
+    docs_kwargs = (
+        {"docs_url": None, "redoc_url": None, "openapi_url": None}
+        if settings.is_production
+        else {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"}
+    )
     app = FastAPI(
         title=settings.PROJECT_NAME,
         version="0.1.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
         lifespan=lifespan,
+        **docs_kwargs,
     )
 
     app.add_middleware(SecurityHeadersMiddleware, hsts=settings.is_production)

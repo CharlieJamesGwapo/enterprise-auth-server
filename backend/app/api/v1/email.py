@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from app.core.config import settings
-from app.dependencies.auth import CurrentUser
+from app.dependencies.auth import CurrentUser, verify_csrf
 from app.dependencies.providers import EmailAccountServiceDep, RateLimiterDep
 from app.middleware.rate_limit import client_ip
 from app.schemas.common import Message
@@ -30,7 +30,11 @@ async def verify_email(payload: TokenRequest, service: EmailAccountServiceDep) -
     return Message(detail="Email verified.")
 
 
-@router.post("/resend-verification", response_model=Message)
+@router.post(
+    "/resend-verification",
+    response_model=Message,
+    dependencies=[Depends(verify_csrf)],
+)
 async def resend_verification(
     background: BackgroundTasks, user: CurrentUser, service: EmailAccountServiceDep
 ) -> Message:
@@ -69,7 +73,7 @@ async def reset_password(
     return Message(detail="Password has been reset.")
 
 
-@router.post("/change-email", response_model=Message)
+@router.post("/change-email", response_model=Message, dependencies=[Depends(verify_csrf)])
 async def change_email(
     payload: ChangeEmailRequest,
     background: BackgroundTasks,

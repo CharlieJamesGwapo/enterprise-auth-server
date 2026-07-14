@@ -5,8 +5,11 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEV_SECRET_KEY = "CHANGE-ME-dev-only-secret-key-not-for-production-use-0123456789"
+DEV_ENCRYPTION_KEY = "_i3FjZl2n-cXVRZCTQE5z5DPJaDhNlXFDBso8tHTClA="
 
 
 class Settings(BaseSettings):
@@ -19,9 +22,7 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
 
     # --- Security / JWT ---
-    SECRET_KEY: str = Field(
-        default="CHANGE-ME-dev-only-secret-key-not-for-production-use-0123456789"
-    )
+    SECRET_KEY: str = Field(default=DEV_SECRET_KEY)
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -31,7 +32,7 @@ class Settings(BaseSettings):
 
     # --- Two-Factor Authentication ---
     # Fernet key (urlsafe base64, 32 bytes) used to encrypt TOTP secrets at rest.
-    ENCRYPTION_KEY: str = "_i3FjZl2n-cXVRZCTQE5z5DPJaDhNlXFDBso8tHTClA="
+    ENCRYPTION_KEY: str = DEV_ENCRYPTION_KEY
     TWO_FACTOR_ISSUER: str = "Enterprise Auth Server"
     TOTP_VALID_WINDOW: int = 1  # accept ±1 time-step (30s each)
     BACKUP_CODE_COUNT: int = 10
@@ -104,6 +105,17 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENV == "production"
+
+    @model_validator(mode="after")
+    def _forbid_dev_secrets_in_production(self) -> Settings:
+        if self.ENV == "production" and (
+            self.SECRET_KEY == DEV_SECRET_KEY or self.ENCRYPTION_KEY == DEV_ENCRYPTION_KEY
+        ):
+            raise ValueError(
+                "Refusing to start in production with the built-in dev SECRET_KEY/"
+                "ENCRYPTION_KEY. Set real values for SECRET_KEY and ENCRYPTION_KEY."
+            )
+        return self
 
 
 @lru_cache

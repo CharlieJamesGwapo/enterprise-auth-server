@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Response
 
 from app.core.cookies import clear_auth_cookies
-from app.dependencies.auth import CurrentSession, CurrentUser
+from app.dependencies.auth import CurrentSession, CurrentUser, verify_csrf
 from app.dependencies.providers import SessionServiceDep
 from app.models.session import Session
 from app.schemas.session import LogoutResponse, SessionRead
@@ -55,7 +55,7 @@ async def get_session(
     return _to_read(record, current.session_uuid)
 
 
-@router.post("/logout", response_model=LogoutResponse)
+@router.post("/logout", response_model=LogoutResponse, dependencies=[Depends(verify_csrf)])
 async def logout_current(
     response: Response,
     user: CurrentUser,
@@ -69,7 +69,7 @@ async def logout_current(
     return LogoutResponse(detail="Current session logged out.", revoked_sessions=1)
 
 
-@router.post("/logout-all", response_model=LogoutResponse)
+@router.post("/logout-all", response_model=LogoutResponse, dependencies=[Depends(verify_csrf)])
 async def logout_all(
     response: Response,
     user: CurrentUser,
@@ -83,7 +83,7 @@ async def logout_all(
     return LogoutResponse(detail="Logged out from all devices.", revoked_sessions=count)
 
 
-@router.delete("/{session_id}", response_model=LogoutResponse)
+@router.delete("/{session_id}", response_model=LogoutResponse, dependencies=[Depends(verify_csrf)])
 async def revoke_session(
     session_id: uuid.UUID,
     user: CurrentUser,

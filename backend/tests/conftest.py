@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 import app.redis.client as redis_client  # noqa: E402
+from app.core.config import settings as _settings  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.db.seed import seed_rbac  # noqa: E402
 from app.dependencies.providers import db_dependency, redis_dependency  # noqa: E402
@@ -99,6 +100,14 @@ async def client(session_factory, fake_redis) -> AsyncGenerator[AsyncClient, Non
     async with AsyncClient(
         transport=transport, base_url="http://test", follow_redirects=True
     ) as ac:
+
+        async def _csrf(request):
+            if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                token = ac.cookies.get(_settings.CSRF_COOKIE_NAME)
+                if token and _settings.CSRF_HEADER_NAME not in request.headers:
+                    request.headers[_settings.CSRF_HEADER_NAME] = token
+
+        ac.event_hooks["request"] = [_csrf]
         yield ac
 
     app.dependency_overrides.clear()

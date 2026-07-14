@@ -132,7 +132,12 @@ class OAuthService:
 
         existing = await self.users.get_by_email(info.email)
         if existing is not None:
-            return existing  # auto-link by matching email
+            if info.email_verified and existing.is_verified:
+                return existing  # auto-link by matching email
+            raise ConflictError(
+                "An account with this email already exists. Sign in with your password "
+                f"and link {info.provider} from account settings."
+            )
 
         # Create a fresh account for this OAuth identity.
         user = User(

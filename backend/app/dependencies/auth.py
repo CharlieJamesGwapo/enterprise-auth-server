@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 import uuid
 from dataclasses import dataclass
 from typing import Annotated
@@ -93,5 +94,5 @@ def verify_csrf(request: Request) -> None:
     """Double-submit CSRF check for state-changing requests."""
     cookie = request.cookies.get(settings.CSRF_COOKIE_NAME)
     header = request.headers.get(settings.CSRF_HEADER_NAME)
-    if not cookie or not header or cookie != header:
+    if not cookie or not header or not secrets.compare_digest(cookie, header):
         raise PermissionDenied("CSRF validation failed.")

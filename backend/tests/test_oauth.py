@@ -94,14 +94,49 @@ async def test_callback_creates_new_user_and_logs_in(client, monkeypatch):
 
 
 async def test_callback_links_existing_user_by_email(client, monkeypatch, seeded_session):
-    await create_user(seeded_session, email="oauth@example.com")
-    install_provider(monkeypatch)
+    # is_verified=True by default in the factory; provider also reports email_verified=True.
+    await create_user(seeded_session, email="oauth@example.com", is_verified=True)
+    install_provider(
+        monkeypatch,
+        info=OAuthUserInfo(
+            provider="google",
+            account_id="acct-123",
+            email="oauth@example.com",
+            name="OAuth User",
+            email_verified=True,
+        ),
+    )
     state = _state_from(await _authorize(client))
     resp = await client.get(f"/api/v1/auth/oauth/google/callback?code=abc&state={state}")
     assert resp.status_code == 200
     # No new user created — logs in as the existing account.
     users = await client.get("/api/v1/auth/me")
     assert users.json()["email"] == "oauth@example.com"
+
+
+async def test_callback_unverified_provider_email_does_not_take_over_account(
+    client, monkeypatch, seeded_session
+):
+    """An attacker controlling a provider account with an unverified victim email
+    must NOT be able to auto-link/login as the victim."""
+    await create_user(seeded_session, email="victim@example.com", is_verified=True)
+    install_provider(
+        monkeypatch,
+        info=OAuthUserInfo(
+            provider="google",
+            account_id="attacker-acct",
+            email="victim@example.com",
+            name="Attacker",
+            email_verified=False,
+        ),
+    )
+    state = _state_from(await _authorize(client))
+    resp = await client.get(f"/api/v1/auth/oauth/google/callback?code=abc&state={state}")
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "conflict"
+    # Not logged in.
+    me = await client.get("/api/v1/auth/me")
+    assert me.status_code == 401
 
 
 async def test_returning_oauth_user_reuses_account(client, monkeypatch):

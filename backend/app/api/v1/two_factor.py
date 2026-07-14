@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.core.audit import audit
 from app.core.config import settings
-from app.dependencies.auth import CurrentUser
+from app.dependencies.auth import CurrentUser, verify_csrf
 from app.dependencies.providers import RateLimiterDep, TwoFactorServiceDep
 from app.middleware.rate_limit import client_ip
 from app.schemas.two_factor import (
@@ -38,7 +38,7 @@ async def status_endpoint(user: CurrentUser, service: TwoFactorServiceDep) -> Tw
 @router.post(
     "/setup",
     response_model=SetupResponse,
-    dependencies=[Depends(_twofa_rate_limit)],
+    dependencies=[Depends(_twofa_rate_limit), Depends(verify_csrf)],
 )
 async def setup(
     payload: PasswordConfirm,
@@ -62,7 +62,7 @@ async def setup(
 @router.post(
     "/verify",
     response_model=SuccessResponse,
-    dependencies=[Depends(_twofa_rate_limit)],
+    dependencies=[Depends(_twofa_rate_limit), Depends(verify_csrf)],
 )
 async def verify(
     payload: OtpVerifyRequest,
@@ -88,7 +88,7 @@ async def qrcode(user: CurrentUser, service: TwoFactorServiceDep) -> Response:
     "/recovery-codes",
     response_model=RecoveryCodesResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(_twofa_rate_limit)],
+    dependencies=[Depends(_twofa_rate_limit), Depends(verify_csrf)],
 )
 async def recovery_codes(
     payload: RecoveryCodesRequest,
@@ -107,7 +107,7 @@ async def recovery_codes(
 @router.post(
     "/recovery-codes/regenerate",
     response_model=RecoveryCodesResponse,
-    dependencies=[Depends(_twofa_rate_limit)],
+    dependencies=[Depends(_twofa_rate_limit), Depends(verify_csrf)],
 )
 async def regenerate_recovery_codes(
     payload: RecoveryCodesRequest,
@@ -126,7 +126,7 @@ async def regenerate_recovery_codes(
 @router.post(
     "/disable",
     response_model=SuccessResponse,
-    dependencies=[Depends(_twofa_rate_limit)],
+    dependencies=[Depends(_twofa_rate_limit), Depends(verify_csrf)],
 )
 async def disable(
     payload: DisableRequest,

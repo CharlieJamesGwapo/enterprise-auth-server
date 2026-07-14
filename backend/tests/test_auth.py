@@ -86,6 +86,8 @@ async def test_logout_clears_cookies_and_blocks_me(client):
 
 async def test_logout_without_csrf_forbidden(client):
     await client.post("/api/v1/auth/register", json=REG)
-    resp = await client.post("/api/v1/auth/logout")
+    resp = await client.post(
+        "/api/v1/auth/logout", headers={settings.CSRF_HEADER_NAME: "wrong-token"}
+    )
     assert resp.status_code == 403
     assert resp.json()["error"] == "permission_denied"
