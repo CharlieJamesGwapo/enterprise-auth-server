@@ -7,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.config import settings
+from app.core.exceptions import RateLimited, ServiceUnavailable
 from app.core.logging import get_logger
 from app.redis.client import get_redis
 from app.services.rate_limit import RateLimiter
@@ -28,13 +29,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         try:
             await limiter.hit(f"global:{ip}", settings.RATE_LIMIT_PER_MINUTE, 60)
         except Exception as exc:  # RateLimited or Redis unavailable
-            from app.core.exceptions import RateLimited
-
             if isinstance(exc, RateLimited):
                 return JSONResponse(
                     status_code=429,
                     content={"error": "rate_limited", "detail": exc.message},
                 )
-            # Fail open if Redis is down, but log it as a security event.
-            logger.error("rate_limit_backend_error", exc_info=exc)
+            if isinstance(exc, ServiceUnavailable):
+                # General traffic fails open on a Redis blip; only auth-critical
+                # operations (login/2FA/lockout) fail closed. Log as a warning
+                # since `hit()` already logged the underlying Redis error.
+                logger.warning("rate_limit_fail_open", exc_info=exc)
+            else:
+                # Unexpected error: fail open too, but log at error level.
+                logger.error("rate_limit_backend_error", exc_info=exc)
         return await call_next(request)

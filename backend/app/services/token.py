@@ -8,7 +8,7 @@ import jwt
 from redis.asyncio import Redis
 
 from app.core.config import settings
-from app.core.exceptions import AuthError
+from app.core.exceptions import AuthError, TokenReplayError
 from app.core.security import create_token, decode_token
 
 _BLACKLIST_PREFIX = "revoked_jti:"
@@ -108,7 +108,10 @@ class TokenService:
         except jwt.PyJWTError as exc:
             raise AuthError("Invalid or expired refresh token.") from exc
         if await self._is_revoked(payload["jti"]):
-            raise AuthError("Refresh token has been revoked.")
+            # The JTI is only blacklisted once it has already been rotated (see
+            # `rotate`/`revoke`), so this means an old, already-used refresh
+            # token is being replayed — a signal of theft, not just expiry.
+            raise TokenReplayError()
         return payload
 
     async def rotate(self, refresh_token: str) -> tuple[str, str | None, TokenPair, str]:

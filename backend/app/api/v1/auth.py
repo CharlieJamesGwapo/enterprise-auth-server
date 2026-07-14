@@ -9,8 +9,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, stat
 from app.core.audit import audit
 from app.core.config import settings
 from app.core.cookies import clear_auth_cookies, set_auth_cookies
-from app.core.exceptions import AuthError
-from app.core.security import generate_csrf_token
+from app.core.exceptions import AuthError, TokenReplayError
+from app.core.security import decode_token, generate_csrf_token
 from app.dependencies.auth import CurrentUser, verify_csrf
 from app.dependencies.providers import (
     DbSession,
@@ -150,7 +150,7 @@ async def login(
     notifications: NotificationServiceDep,
 ) -> AuthResponse | LoginChallengeResponse:
     service = AuthService(session, limiter)
-    user = await service.authenticate(payload.email, payload.password)
+    user = await service.authenticate(payload.email, payload.password, ip=client_ip(request))
     await session.commit()
 
     # 2FA gate: never issue a session before the second factor is proven.
@@ -244,7 +244,11 @@ async def refresh(
     token = request.cookies.get(settings.REFRESH_COOKIE_NAME)
     if not token:
         raise AuthError("Missing refresh token.")
-    user_id, sid, pair, refresh_jti = await tokens.rotate(token)
+    try:
+        user_id, sid, pair, refresh_jti = await tokens.rotate(token)
+    except TokenReplayError as exc:
+        await _handle_refresh_replay(token, sessions)
+        raise AuthError(str(exc)) from exc
     if sid:
         # Keep the session bound to the rotated refresh token (also enforces that
         # the session is still active — a revoked session cannot refresh).
@@ -252,6 +256,30 @@ async def refresh(
     csrf = generate_csrf_token()
     set_auth_cookies(response, pair, csrf)
     return Message(detail="refreshed")
+
+
+async def _handle_refresh_replay(token: str, sessions: SessionServiceDep) -> None:
+    """A blacklisted (already-rotated) refresh token was replayed.
+
+    This is a signal of token theft: the legitimate user already rotated this
+    token, so whoever presented it again is not the legitimate holder. Kill
+    the whole session/family rather than just rejecting this one request.
+    """
+    try:
+        payload = decode_token(token, expected_type="refresh")
+    except Exception:
+        return
+    sid = payload.get("sid")
+    if not sid:
+        return
+    record = await sessions.revoke_by_sid(sid, reason="refresh_replay")
+    if record is not None:
+        await sessions.session.commit()
+        audit(
+            "refresh_replay_detected",
+            user_id=str(record.user_id),
+            session=str(record.session_uuid),
+        )
 
 
 @router.post("/logout", response_model=Message, dependencies=[Depends(verify_csrf)])

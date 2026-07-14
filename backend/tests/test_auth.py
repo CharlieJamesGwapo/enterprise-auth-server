@@ -75,6 +75,42 @@ async def test_refresh_rotates_and_old_token_is_revoked(client):
     assert replay.status_code == 401
 
 
+async def test_refresh_replay_revokes_whole_session_family(client):
+    """Replaying an already-rotated refresh token must kill the whole session,
+    not just reject the stale token — a stolen refresh token should not let an
+    attacker (or the legit user) keep using the session afterwards.
+    """
+    await client.post("/api/v1/auth/register", json=REG)
+    await client.post(
+        "/api/v1/auth/login", json={"email": REG["email"], "password": REG["password"]}
+    )
+    old_refresh = client.cookies.get(settings.REFRESH_COOKIE_NAME)
+
+    first = await client.post("/api/v1/auth/refresh")
+    assert first.status_code == 200
+    new_refresh = client.cookies.get(settings.REFRESH_COOKIE_NAME)
+
+    # Replay the OLD (already-rotated) refresh token -> 401, and the session
+    # family is revoked as a side effect.
+    client.cookies.set(
+        settings.REFRESH_COOKIE_NAME, old_refresh, path=f"{settings.API_V1_PREFIX}/auth"
+    )
+    replay = await client.post("/api/v1/auth/refresh")
+    assert replay.status_code == 401
+
+    # The NEW (legitimate, rotated) refresh token must now also be rejected —
+    # the whole session was revoked, not just the replayed token.
+    client.cookies.set(
+        settings.REFRESH_COOKIE_NAME, new_refresh, path=f"{settings.API_V1_PREFIX}/auth"
+    )
+    legit_refresh = await client.post("/api/v1/auth/refresh")
+    assert legit_refresh.status_code == 401
+
+    # The current access cookie is also dead now (session revoked).
+    me = await client.get("/api/v1/auth/me")
+    assert me.status_code == 401
+
+
 async def test_logout_clears_cookies_and_blocks_me(client):
     reg = await client.post("/api/v1/auth/register", json=REG)
     csrf = reg.json()["csrf_token"]

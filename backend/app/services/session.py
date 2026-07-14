@@ -185,6 +185,24 @@ class SessionService:
             await self.revoke(record, reason=reason)
         return record
 
+    async def revoke_by_sid(self, sid: str, *, reason: str) -> Session | None:
+        """Revoke a session by its raw uuid string, no ownership check.
+
+        Used for refresh-token replay handling: the caller has already proven
+        possession of a (now-revoked) refresh token bound to this session, so
+        no additional ownership check is needed. Returns the session record if
+        one was found and active, else None.
+        """
+        try:
+            session_uuid = uuid.UUID(sid)
+        except ValueError:
+            return None
+        record = await self.repo.get_by_uuid(session_uuid)
+        if record is None or not record.is_active:
+            return None
+        await self.revoke(record, reason=reason)
+        return record
+
     async def revoke_all(
         self, user: User, *, reason: str, except_uuid: uuid.UUID | None = None
     ) -> int:

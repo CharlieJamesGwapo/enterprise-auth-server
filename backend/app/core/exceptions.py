@@ -59,9 +59,20 @@ class RateLimited(AppError):
     message = "Too many requests. Please try again later."
 
 
+class ServiceUnavailable(AppError):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    error_code = "service_unavailable"
+    message = "A dependency is temporarily unavailable. Please retry."
+
+
 class AccountLocked(AuthError):
     error_code = "account_locked"
     message = "Account temporarily locked due to too many failed attempts."
+
+
+class TokenReplayError(AuthError):
+    error_code = "token_replay_detected"
+    message = "Refresh token reuse detected."
 
 
 def _payload(exc: AppError) -> dict[str, object]:

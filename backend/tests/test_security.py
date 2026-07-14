@@ -38,6 +38,41 @@ async def test_account_locks_after_repeated_failures(client):
     assert locked.json()["error"] == "account_locked"
 
 
+async def test_lockout_is_scoped_per_ip_not_just_email(client):
+    """An attacker who only knows a victim's email must not be able to lock
+    the victim out from a different IP — lockout keys on (email, IP).
+    """
+    await client.post("/api/v1/auth/register", json=REG)
+
+    # Attacker on IP A exhausts the failure budget for the victim's email.
+    attacker_headers = {"X-Forwarded-For": "10.0.0.1"}
+    for _ in range(settings.MAX_FAILED_LOGINS):
+        r = await client.post(
+            "/api/v1/auth/login",
+            json={"email": REG["email"], "password": "nope"},
+            headers=attacker_headers,
+        )
+        assert r.status_code == 401
+
+    # IP A is now locked out for this email, even with the correct password.
+    locked = await client.post(
+        "/api/v1/auth/login",
+        json={"email": REG["email"], "password": REG["password"]},
+        headers=attacker_headers,
+    )
+    assert locked.status_code == 401
+    assert locked.json()["error"] == "account_locked"
+
+    # The victim, logging in from a different IP, is unaffected.
+    victim_headers = {"X-Forwarded-For": "10.0.0.2"}
+    victim_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": REG["email"], "password": REG["password"]},
+        headers=victim_headers,
+    )
+    assert victim_login.status_code == 200, victim_login.text
+
+
 async def test_security_headers_present(client):
     resp = await client.get("/api/v1/health")
     assert resp.headers["X-Content-Type-Options"] == "nosniff"

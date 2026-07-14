@@ -42,20 +42,20 @@ class AuthService:
         logger.info("user_registered", extra={"user_id": str(user.id)})
         return user
 
-    async def authenticate(self, email: str, password: str) -> User:
-        await self.rate_limiter.ensure_not_locked(email)
+    async def authenticate(self, email: str, password: str, ip: str | None = None) -> User:
+        await self.rate_limiter.ensure_not_locked(email, ip=ip)
         user = await self.users.get_by_email(email)
         # Verify against the stored hash (or a dummy) to avoid user enumeration timing.
         stored = user.hashed_password if user else hash_password("invalid-placeholder")
         password_ok = verify_password(password, stored)
 
         if not user or not password_ok:
-            await self.rate_limiter.record_failure(email)
+            await self.rate_limiter.record_failure(email, ip=ip)
             raise AuthError("Invalid email or password.")
         if not user.is_active:
             raise AuthError("This account is disabled.")
 
-        await self.rate_limiter.clear_failures(email)
+        await self.rate_limiter.clear_failures(email, ip=ip)
         if needs_rehash(user.hashed_password):
             user.hashed_password = hash_password(password)
             await self.session.flush()
