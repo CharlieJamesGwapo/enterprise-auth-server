@@ -4,12 +4,8 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, urlparse
 
-import pytest
-
 from app.services.oauth.base import OAuthUserInfo
 from tests.factories import create_user
-
-pytestmark = pytest.mark.asyncio
 
 PASSWORD = "S3curePass!word"
 

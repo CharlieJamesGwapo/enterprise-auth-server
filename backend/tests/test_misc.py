@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import logging
 
-import pytest
-
 from app.core.config import settings
 from app.core.logging import JsonFormatter, configure_logging
-
-pytestmark = pytest.mark.asyncio
 
 REG = {"email": "dan@example.com", "password": "S3curePass!word", "full_name": "Dan"}
 

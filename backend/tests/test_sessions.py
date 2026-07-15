@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
+import uuid as uuidlib
+
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.useragent import parse_user_agent
-
-pytestmark = pytest.mark.asyncio
+from app.models.session import Session
 
 PASSWORD = "S3curePass!word"
 REG = {"email": "sess@example.com", "password": PASSWORD, "full_name": "Sess User"}
@@ -193,3 +194,37 @@ async def test_refresh_keeps_session_and_rotates(client):
     # Same session id survives rotation.
     assert len(after) == 1
     assert after[0]["session_id"] == before
+
+
+async def test_absolute_expiry_distinct_from_idle_rejects_and_persists(client, session_factory):
+    """Absolute session lifetime (SESSION_ABSOLUTE_EXPIRE_HOURS) must be
+    enforced independently of the idle timeout: even with fresh activity, a
+    session past its absolute expiry is rejected and durably marked inactive
+    with logout_reason="absolute_expiry" (not "idle_timeout").
+
+    We set expires_at into the past via a direct DB write (rather than
+    monkeypatching SESSION_ABSOLUTE_EXPIRE_HOURS down to 0 at creation time,
+    which would also collapse the revoke-cache TTL to an invalid 0-second
+    Redis expiry) so only the absolute-expiry code path is exercised.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    await register(client)
+    sid = (await client.get("/api/v1/sessions")).json()["items"][0]["session_id"]
+
+    async with session_factory() as s:
+        row = (
+            await s.execute(select(Session).where(Session.session_uuid == uuidlib.UUID(sid)))
+        ).scalar_one()
+        row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await s.commit()
+
+    resp = await client.get("/api/v1/auth/me")
+    assert resp.status_code == 401
+
+    async with session_factory() as s:
+        row = (
+            await s.execute(select(Session).where(Session.session_uuid == uuidlib.UUID(sid)))
+        ).scalar_one()
+    assert row.is_active is False
+    assert row.logout_reason == "absolute_expiry"
