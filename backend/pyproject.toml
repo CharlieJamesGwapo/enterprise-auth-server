@@ -39,6 +39,7 @@ dev = [
     "faker>=33.1",
     "fakeredis>=2.26",
     "ruff>=0.8",
+    "respx>=0.21",
 ]
 
 [tool.ruff]
@@ -51,7 +52,7 @@ ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "-q --cov=app --cov-report=term-missing"
+addopts = "-q --cov=app --cov-report=term-missing --cov-fail-under=95"
 testpaths = ["tests"]
 
 [tool.coverage.run]

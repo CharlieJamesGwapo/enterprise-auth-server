@@ -127,3 +127,18 @@ async def test_logout_without_csrf_forbidden(client):
     )
     assert resp.status_code == 403
     assert resp.json()["error"] == "permission_denied"
+
+
+async def test_logout_then_refresh_is_rejected(client):
+    """After logout, replaying the pre-logout refresh token must fail (session revoked)."""
+    reg = await client.post("/api/v1/auth/register", json=REG)
+    assert reg.status_code == 201
+    refresh = client.cookies.get(settings.REFRESH_COOKIE_NAME)
+
+    out = await client.post("/api/v1/auth/logout")  # CSRF header auto-injected by fixture
+    assert out.status_code == 200
+
+    # Re-present the captured refresh token: the session was revoked at logout.
+    client.cookies.set(settings.REFRESH_COOKIE_NAME, refresh, path=f"{settings.API_V1_PREFIX}/auth")
+    resp = await client.post("/api/v1/auth/refresh")
+    assert resp.status_code == 401
