@@ -129,7 +129,7 @@ class EmailAccountService:
         user = await self.users.get(token.user_id)
         if user is None:
             raise AuthError("Account no longer exists.")
-        user.hashed_password = hash_password(new_password)
+        user.hashed_password = await hash_password(new_password)
         await self.session.flush()
         background.add_task(self.notifications.send_password_changed, user.email)
         audit("password_reset_completed", user_id=str(user.id))
@@ -139,7 +139,7 @@ class EmailAccountService:
     async def request_email_change(
         self, user: User, new_email: str, password: str, background: BackgroundTasks
     ) -> None:
-        if not verify_password(password, user.hashed_password):
+        if not await verify_password(password, user.hashed_password):
             raise AuthError("Password confirmation failed.")
         new_email = new_email.lower()
         if new_email == user.email:

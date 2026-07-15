@@ -142,7 +142,7 @@ class OAuthService:
         # Create a fresh account for this OAuth identity.
         user = User(
             email=info.email.lower(),
-            hashed_password=hash_password(secrets.token_urlsafe(32)),
+            hashed_password=await hash_password(secrets.token_urlsafe(32)),
             full_name=info.name or "",
             is_verified=info.email_verified,
         )

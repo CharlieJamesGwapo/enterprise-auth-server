@@ -54,3 +54,33 @@ class SessionRepository(BaseRepository[Session]):
             .where(Session.user_id == user_id, Session.is_active.is_(True))
         )
         return int(result.scalar_one())
+
+    async def has_any_for_user(self, user_id: uuid.UUID) -> bool:
+        """True if the user has any session at all (active or not)."""
+        result = await self.session.execute(
+            select(func.count()).select_from(Session).where(Session.user_id == user_id)
+        )
+        return int(result.scalar_one()) > 0
+
+    async def has_matching_device(
+        self,
+        user_id: uuid.UUID,
+        *,
+        browser: str | None,
+        operating_system: str | None,
+        device_type: str | None,
+    ) -> bool:
+        """True if the user has any session (active or not) with this exact
+        browser + operating_system + device_type combination.
+        """
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(
+                Session.user_id == user_id,
+                Session.browser == browser,
+                Session.operating_system == operating_system,
+                Session.device_type == device_type,
+            )
+        )
+        return int(result.scalar_one()) > 0

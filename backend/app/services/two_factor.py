@@ -12,6 +12,7 @@ import io
 import secrets
 from datetime import UTC, datetime
 
+import anyio
 import pyotp
 import qrcode
 from redis.asyncio import Redis
@@ -45,8 +46,8 @@ class TwoFactorService:
         return pyotp.TOTP(secret)
 
     @staticmethod
-    def require_password(user: User, password: str) -> None:
-        if not verify_password(password, user.hashed_password):
+    async def require_password(user: User, password: str) -> None:
+        if not await verify_password(password, user.hashed_password):
             raise AuthError("Password confirmation failed.")
 
     def provisioning_uri(self, secret: str, email: str) -> str:
@@ -55,22 +56,28 @@ class TwoFactorService:
         )
 
     @staticmethod
-    def qr_code_base64(provisioning_uri: str) -> str:
-        img = qrcode.make(provisioning_uri)
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        return base64.b64encode(buffer.getvalue()).decode()
+    async def qr_code_base64(provisioning_uri: str) -> str:
+        def _render() -> str:
+            img = qrcode.make(provisioning_uri)
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            return base64.b64encode(buffer.getvalue()).decode()
 
-    def qr_code_png(self, provisioning_uri: str) -> bytes:
-        img = qrcode.make(provisioning_uri)
-        buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
-        return buffer.getvalue()
+        return await anyio.to_thread.run_sync(_render)
+
+    async def qr_code_png(self, provisioning_uri: str) -> bytes:
+        def _render() -> bytes:
+            img = qrcode.make(provisioning_uri)
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        return await anyio.to_thread.run_sync(_render)
 
     # ------------------------------------------------------------------- setup
     async def start_setup(self, user: User, password: str) -> tuple[str, str]:
         """Verify password, (re)create a pending secret. Returns (secret, uri)."""
-        self.require_password(user, password)
+        await self.require_password(user, password)
 
         record = await self.twofa.get_by_user(user.id)
         if record is not None and record.enabled:
@@ -155,7 +162,8 @@ class TwoFactorService:
 
         plaintext = [self._generate_code() for _ in range(settings.BACKUP_CODE_COUNT)]
         for code in plaintext:
-            self.session.add(BackupCode(user_id=user.id, hashed_code=hash_password(code)))
+            hashed = await hash_password(code)
+            self.session.add(BackupCode(user_id=user.id, hashed_code=hashed))
         await self.session.flush()
         return plaintext
 
@@ -165,7 +173,7 @@ class TwoFactorService:
 
         normalized = code.strip().upper()
         for candidate in await self.codes.list_unused(user.id):
-            if verify_password(normalized, candidate.hashed_code):
+            if await verify_password(normalized, candidate.hashed_code):
                 candidate.used_at = datetime.now(UTC)
                 await self.session.flush()
                 await self.rate_limiter.clear_failures(lock_id)
@@ -175,7 +183,7 @@ class TwoFactorService:
 
     # -------------------------------------------------------------- disable
     async def disable(self, user: User, password: str, otp: str) -> None:
-        self.require_password(user, password)
+        await self.require_password(user, password)
         await self.verify_totp(user, otp)
         record = await self.twofa.get_by_user(user.id)
         if record is not None:

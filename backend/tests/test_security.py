@@ -12,12 +12,12 @@ pytestmark = pytest.mark.asyncio
 REG = {"email": "carol@example.com", "password": "S3curePass!word", "full_name": "Carol"}
 
 
-def test_argon2_hashing_roundtrip():
-    hashed = hash_password("hunter2-long-password")
+async def test_argon2_hashing_roundtrip():
+    hashed = await hash_password("hunter2-long-password")
     assert hashed != "hunter2-long-password"
     assert hashed.startswith("$argon2")
-    assert verify_password("hunter2-long-password", hashed)
-    assert not verify_password("wrong", hashed)
+    assert await verify_password("hunter2-long-password", hashed)
+    assert not await verify_password("wrong", hashed)
     assert not needs_rehash(hashed)
 
 

@@ -53,7 +53,7 @@ async def setup(
     audit("2fa_setup_started", user_id=str(user.id))
     return SetupResponse(
         provisioning_uri=uri,
-        qr_code_base64=service.qr_code_base64(uri),
+        qr_code_base64=await service.qr_code_base64(uri),
         secret=secret,
     )
 
@@ -79,7 +79,7 @@ async def qrcode(user: CurrentUser, service: TwoFactorServiceDep) -> Response:
     """Return the pending setup's QR code as a PNG image."""
     secret = await service.get_pending_secret(user)
     uri = service.provisioning_uri(secret, user.email)
-    return Response(content=service.qr_code_png(uri), media_type="image/png")
+    return Response(content=await service.qr_code_png(uri), media_type="image/png")
 
 
 @router.post(
@@ -94,7 +94,7 @@ async def recovery_codes(
     service: TwoFactorServiceDep,
 ) -> RecoveryCodesResponse:
     """Generate the initial set of recovery codes (fails if some already exist)."""
-    service.require_password(user, payload.password)
+    await service.require_password(user, payload.password)
     await service.verify_totp(user, payload.otp)
     codes = await service.generate_recovery_codes(user, replace=False)
     audit("2fa_recovery_codes_generated", user_id=str(user.id))
@@ -112,7 +112,7 @@ async def regenerate_recovery_codes(
     service: TwoFactorServiceDep,
 ) -> RecoveryCodesResponse:
     """Delete existing recovery codes and issue a fresh set."""
-    service.require_password(user, payload.password)
+    await service.require_password(user, payload.password)
     await service.verify_totp(user, payload.otp)
     codes = await service.generate_recovery_codes(user, replace=True)
     audit("2fa_recovery_codes_regenerated", user_id=str(user.id))

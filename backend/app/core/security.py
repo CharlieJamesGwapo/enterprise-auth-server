@@ -7,22 +7,33 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+import anyio
 import jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
 
-_pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+_pwd_context = CryptContext(
+    schemes=["argon2"],
+    deprecated="auto",
+    argon2__time_cost=2,
+    argon2__memory_cost=19456,
+    argon2__parallelism=1,
+)
 
 TokenType = Literal["access", "refresh", "pre_auth"]
 
 
-def hash_password(password: str) -> str:
-    return _pwd_context.hash(password)
+async def hash_password(password: str) -> str:
+    """Hash a password with Argon2. Offloaded to a worker thread since the KDF
+    is CPU-bound and would otherwise block the event loop.
+    """
+    return await anyio.to_thread.run_sync(_pwd_context.hash, password)
 
 
-def verify_password(password: str, password_hash: str) -> bool:
-    return _pwd_context.verify(password, password_hash)
+async def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its Argon2 hash. Offloaded to a worker thread."""
+    return await anyio.to_thread.run_sync(_pwd_context.verify, password, password_hash)
 
 
 def needs_rehash(password_hash: str) -> bool:

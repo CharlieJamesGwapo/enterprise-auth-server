@@ -31,7 +31,7 @@ class AuthService:
             raise ConflictError("A user with this email already exists.")
         user = User(
             email=email.lower(),
-            hashed_password=hash_password(password),
+            hashed_password=await hash_password(password),
             full_name=full_name,
         )
         default_role = await self.roles.get_by_name(DEFAULT_ROLE)
@@ -45,8 +45,8 @@ class AuthService:
         await self.rate_limiter.ensure_not_locked(email, ip=ip)
         user = await self.users.get_by_email(email)
         # Verify against the stored hash (or a dummy) to avoid user enumeration timing.
-        stored = user.hashed_password if user else hash_password("invalid-placeholder")
-        password_ok = verify_password(password, stored)
+        stored = user.hashed_password if user else await hash_password("invalid-placeholder")
+        password_ok = await verify_password(password, stored)
 
         if not user or not password_ok:
             await self.rate_limiter.record_failure(email, ip=ip)
@@ -56,7 +56,7 @@ class AuthService:
 
         await self.rate_limiter.clear_failures(email, ip=ip)
         if needs_rehash(user.hashed_password):
-            user.hashed_password = hash_password(password)
+            user.hashed_password = await hash_password(password)
             await self.session.flush()
         logger.info("user_authenticated", extra={"user_id": str(user.id)})
         return user

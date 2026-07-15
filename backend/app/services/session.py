@@ -70,12 +70,13 @@ class SessionService:
         geo = resolve_location(ip, headers)
         now = _now()
 
-        prior = await self.repo.list_for_user(user.id, active_only=False)
-        is_new_device = bool(prior) and not any(
-            s.browser == device.browser
-            and s.operating_system == device.operating_system
-            and s.device_type == device.device_type
-            for s in prior
+        is_new_device = await self.repo.has_any_for_user(user.id) and not (
+            await self.repo.has_matching_device(
+                user.id,
+                browser=device.browser,
+                operating_system=device.operating_system,
+                device_type=device.device_type,
+            )
         )
 
         record = Session(
