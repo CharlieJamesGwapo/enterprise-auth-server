@@ -82,6 +82,10 @@ class Settings(BaseSettings):
 
     # --- Database ---
     DATABASE_URL: str = "postgresql+asyncpg://auth:auth@localhost:5432/auth"
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_RECYCLE_SECONDS: int = 1800
+    DB_POOL_TIMEOUT: int = 30
 
     # --- Redis ---
     REDIS_URL: str = "redis://localhost:6379/0"

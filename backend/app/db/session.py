@@ -13,11 +13,26 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.config import settings
 
+_url = settings.DATABASE_URL
+# SQLite (used in tests) uses a different pool implementation than Postgres and
+# does not accept these pool-sizing kwargs, so only pass them for real backends.
+_pool_kwargs = (
+    {}
+    if _url.startswith("sqlite")
+    else {
+        "pool_size": settings.DB_POOL_SIZE,
+        "max_overflow": settings.DB_MAX_OVERFLOW,
+        "pool_recycle": settings.DB_POOL_RECYCLE_SECONDS,
+        "pool_timeout": settings.DB_POOL_TIMEOUT,
+    }
+)
+
 _engine: AsyncEngine = create_async_engine(
-    settings.DATABASE_URL,
+    _url,
     echo=settings.DEBUG,
     pool_pre_ping=True,
     future=True,
+    **_pool_kwargs,
 )
 
 SessionFactory = async_sessionmaker(bind=_engine, expire_on_commit=False, class_=AsyncSession)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+import uuid6
 from sqlalchemy import DateTime, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -16,7 +17,9 @@ class Base(DeclarativeBase):
 
 
 class UUIDMixin:
-    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    # uuid7 is time-ordered, which keeps B-tree inserts sequential (unlike
+    # random uuid4) while remaining a drop-in `uuid.UUID` for the GUID type.
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid6.uuid7)
 
 
 class TimestampMixin:

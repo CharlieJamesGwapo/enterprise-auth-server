@@ -26,6 +26,7 @@ dependencies = [
     "user-agents>=2.2",
     "aiosmtplib>=3.0",
     "httpx>=0.28",
+    "uuid6>=2024.7.10",
 ]
 
 [dependency-groups]

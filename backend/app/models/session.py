@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -16,6 +16,9 @@ class Session(UUIDMixin, TimestampMixin, Base):
     """A single authenticated session (one per successful login)."""
 
     __tablename__ = "sessions"
+    __table_args__ = (
+        Index("ix_sessions_user_active_activity", "user_id", "is_active", "last_activity_at"),
+    )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False

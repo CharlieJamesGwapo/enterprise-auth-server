@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDMixin
@@ -19,6 +19,7 @@ PURPOSE_CHANGE_EMAIL = "change_email"
 
 class EmailToken(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "email_tokens"
+    __table_args__ = (Index("ix_email_tokens_user_purpose", "user_id", "purpose"),)
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         GUID(), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
