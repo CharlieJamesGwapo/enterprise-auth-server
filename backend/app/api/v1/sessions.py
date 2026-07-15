@@ -64,7 +64,6 @@ async def logout_current(
 ) -> LogoutResponse:
     """Revoke the current session and clear auth cookies."""
     await sessions.revoke(current, reason="logout")
-    await sessions.session.commit()
     clear_auth_cookies(response)
     return LogoutResponse(detail="Current session logged out.", revoked_sessions=1)
 
@@ -78,7 +77,6 @@ async def logout_all(
 ) -> LogoutResponse:
     """Revoke every active session for the user (including this one)."""
     count = await sessions.revoke_all(user, reason="logout_all")
-    await sessions.session.commit()
     clear_auth_cookies(response)
     return LogoutResponse(detail="Logged out from all devices.", revoked_sessions=count)
 
@@ -92,5 +90,4 @@ async def revoke_session(
 ) -> LogoutResponse:
     """Revoke a specific session by id (ownership enforced)."""
     await sessions.revoke_by_uuid(user, session_id, reason="revoked_by_user")
-    await sessions.session.commit()
     return LogoutResponse(detail="Session revoked.", revoked_sessions=1)

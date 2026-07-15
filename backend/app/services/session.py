@@ -145,7 +145,7 @@ class SessionService:
             return
         record.last_activity_at = now
         record.request_count += 1
-        await self.session.commit()
+        await self.session.flush()
         await self.redis.set(throttle_key, "1", ex=settings.SESSION_ACTIVITY_THROTTLE_SECONDS)
         await self._set_active(record.session_uuid)
 
@@ -154,6 +154,9 @@ class SessionService:
         record.is_active = False
         record.logout_at = _now()
         record.logout_reason = reason
+        # Commit here (not just flush): the caller raises AuthError to reject the
+        # request immediately after this, and the end-of-request rollback would
+        # otherwise discard the expiry, leaving a stale is_active=True row.
         await self.session.commit()
         await self._clear_cache(record.session_uuid, revoke=True)
         audit(
@@ -225,7 +228,7 @@ class SessionService:
             raise AuthError("Session is no longer valid.")
         record.refresh_token_id = new_refresh_jti
         record.last_activity_at = _now()
-        await self.session.commit()
+        await self.session.flush()
         await self._set_active(session_uuid)
         audit("token_refresh", user_id=str(user_id), session=str(session_uuid))
 

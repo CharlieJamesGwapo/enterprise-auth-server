@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 
 from app.dependencies.auth import CurrentSession, CurrentUser, require_permission
 from app.dependencies.providers import DbSession, SessionServiceDep
-from app.models.user import User
+from app.repositories.user import UserRepository
 from app.schemas.session import LastLoginRead
 from app.schemas.user import UserRead
 
@@ -41,5 +40,5 @@ async def last_login(
     dependencies=[Depends(require_permission("manage_users"))],
 )
 async def list_users(session: DbSession) -> list[UserRead]:
-    result = await session.execute(select(User).order_by(User.created_at))
-    return [UserRead.from_model(u) for u in result.scalars().all()]
+    users = await UserRepository(session).list_all()
+    return [UserRead.from_model(u) for u in users]

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit
 from app.core.config import settings
 from app.core.exceptions import AuthError, ConflictError, ValidationError
+from app.core.passwords import validate_password_strength
 from app.core.security import hash_password, verify_password
 from app.models.email_token import (
     PURPOSE_CHANGE_EMAIL,
@@ -101,7 +102,7 @@ class EmailAccountService:
         if user is None:
             raise AuthError("Account no longer exists.")
         user.is_verified = True
-        await self.session.commit()
+        await self.session.flush()
         audit("email_verified", user_id=str(user.id))
         return user
 
@@ -116,22 +117,20 @@ class EmailAccountService:
             PURPOSE_RESET_PASSWORD,
             timedelta(minutes=settings.PASSWORD_RESET_EXPIRE_MINUTES),
         )
-        await self.session.commit()
+        await self.session.flush()
         background.add_task(self.notifications.send_password_reset, user.email, raw)
         audit("password_reset_requested", user_id=str(user.id))
 
     async def reset_password(
         self, raw: str, new_password: str, background: BackgroundTasks
     ) -> User:
-        from app.core.passwords import validate_password_strength
-
         validate_password_strength(new_password)
         token = await self._consume(raw, PURPOSE_RESET_PASSWORD)
         user = await self.users.get(token.user_id)
         if user is None:
             raise AuthError("Account no longer exists.")
         user.hashed_password = hash_password(new_password)
-        await self.session.commit()
+        await self.session.flush()
         background.add_task(self.notifications.send_password_changed, user.email)
         audit("password_reset_completed", user_id=str(user.id))
         return user
@@ -153,7 +152,7 @@ class EmailAccountService:
             timedelta(hours=settings.EMAIL_CHANGE_EXPIRE_HOURS),
             new_email=new_email,
         )
-        await self.session.commit()
+        await self.session.flush()
         background.add_task(self.notifications.send_email_change, new_email, raw)
         audit("email_change_requested", user_id=str(user.id))
 
@@ -167,6 +166,6 @@ class EmailAccountService:
             raise ConflictError("That email address is already in use.")
         user.email = token.new_email
         user.is_verified = True
-        await self.session.commit()
+        await self.session.flush()
         audit("email_changed", user_id=str(user.id))
         return user

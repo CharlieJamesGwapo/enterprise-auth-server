@@ -91,7 +91,12 @@ async def client(session_factory, fake_redis) -> AsyncGenerator[AsyncClient, Non
     async def _db_override() -> AsyncGenerator[AsyncSession, None]:
         async with session_factory() as session:
             await seed_rbac(session)
-            yield session
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
 
     app.dependency_overrides[db_dependency] = _db_override
     app.dependency_overrides[redis_dependency] = lambda: fake_redis

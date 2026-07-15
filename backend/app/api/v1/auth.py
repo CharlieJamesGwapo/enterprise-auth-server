@@ -6,6 +6,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 
+from app.api.v1._login import _finalize_login
 from app.core.audit import audit
 from app.core.config import settings
 from app.core.cookies import clear_auth_cookies, set_auth_cookies
@@ -13,6 +14,7 @@ from app.core.exceptions import AuthError, TokenReplayError
 from app.core.security import decode_token, generate_csrf_token
 from app.dependencies.auth import CurrentUser, verify_csrf
 from app.dependencies.providers import (
+    AuthServiceDep,
     DbSession,
     EmailAccountServiceDep,
     NotificationServiceDep,
@@ -33,7 +35,6 @@ from app.schemas.auth import (
 )
 from app.schemas.common import Message
 from app.schemas.user import UserRead
-from app.services.auth import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -52,44 +53,6 @@ async def _auth_rate_limit(request: Request, limiter: RateLimiterDep) -> None:
     await limiter.hit(f"auth:{client_ip(request)}", settings.AUTH_RATE_LIMIT_PER_MINUTE, 60)
 
 
-async def _finalize_login(
-    request: Request,
-    response: Response,
-    tokens: TokenServiceDep,
-    sessions: SessionServiceDep,
-    notifications: NotificationServiceDep,
-    background: BackgroundTasks,
-    user,
-    remember_me: bool,
-) -> AuthResponse:
-    """Issue a session: mint tokens bound to a new session id and persist it."""
-    session_uuid = uuid.uuid4()
-    pair, refresh_jti = tokens.issue_pair(
-        str(user.id), remember_me=remember_me, session_id=str(session_uuid)
-    )
-    record, is_new_device = await sessions.create_session(
-        user=user,
-        session_uuid=session_uuid,
-        refresh_jti=refresh_jti,
-        remember_me=remember_me,
-        ip=client_ip(request),
-        user_agent=request.headers.get("user-agent", ""),
-        headers=dict(request.headers),
-    )
-    await sessions.session.commit()
-    if is_new_device:
-        background.add_task(
-            notifications.send_new_device_alert,
-            user.email,
-            device=record.device_name,
-            browser=record.browser,
-            ip=record.ip_address,
-        )
-    csrf = generate_csrf_token()
-    set_auth_cookies(response, pair, csrf)
-    return AuthResponse(user=UserRead.from_model(user), csrf_token=csrf)
-
-
 @router.post(
     "/register",
     response_model=AuthResponse,
@@ -101,16 +64,14 @@ async def register(
     request: Request,
     response: Response,
     background: BackgroundTasks,
-    session: DbSession,
-    limiter: RateLimiterDep,
+    auth_service: AuthServiceDep,
     tokens: TokenServiceDep,
     sessions: SessionServiceDep,
     notifications: NotificationServiceDep,
     email_service: EmailAccountServiceDep,
 ) -> AuthResponse:
-    service = AuthService(session, limiter)
-    user = await service.register(payload.email, payload.password, payload.full_name)
-    await session.flush()
+    user = await auth_service.register(payload.email, payload.password, payload.full_name)
+    await auth_service.session.flush()
     result = await _finalize_login(
         request,
         response,
@@ -122,7 +83,6 @@ async def register(
         remember_me=False,
     )
     await email_service.send_signup_emails(user, background)
-    await session.commit()
     return result
 
 
@@ -142,16 +102,13 @@ async def login(
     request: Request,
     response: Response,
     background: BackgroundTasks,
-    session: DbSession,
-    limiter: RateLimiterDep,
+    auth_service: AuthServiceDep,
     tokens: TokenServiceDep,
     twofa: TwoFactorServiceDep,
     sessions: SessionServiceDep,
     notifications: NotificationServiceDep,
 ) -> AuthResponse | LoginChallengeResponse:
-    service = AuthService(session, limiter)
-    user = await service.authenticate(payload.email, payload.password, ip=client_ip(request))
-    await session.commit()
+    user = await auth_service.authenticate(payload.email, payload.password, ip=client_ip(request))
 
     # 2FA gate: never issue a session before the second factor is proven.
     if await twofa.is_enabled(user):
@@ -186,7 +143,6 @@ async def login_otp(
     user_id = tokens.verify_pre_auth(payload.pre_auth_token)
     user = await _load_user_for_otp(session, user_id)
     await twofa.verify_totp(user, payload.otp)
-    await session.commit()
     audit("login_2fa_otp_success", user_id=str(user.id))
     return await _finalize_login(
         request,
@@ -220,7 +176,6 @@ async def login_recovery_code(
     user_id = tokens.verify_pre_auth(payload.pre_auth_token)
     user = await _load_user_for_otp(session, user_id)
     await twofa.consume_recovery_code(user, payload.recovery_code)
-    await session.commit()
     audit("login_2fa_recovery_success", user_id=str(user.id))
     return await _finalize_login(
         request,
@@ -274,6 +229,9 @@ async def _handle_refresh_replay(token: str, sessions: SessionServiceDep) -> Non
         return
     record = await sessions.revoke_by_sid(sid, reason="refresh_replay")
     if record is not None:
+        # Commit the family revocation before the route re-raises 401 — otherwise
+        # the end-of-request rollback would discard it, leaving the session active
+        # in the DB (Redis alone would carry the revocation).
         await sessions.session.commit()
         audit(
             "refresh_replay_detected",
@@ -299,7 +257,6 @@ async def logout(
                 record = await sessions.repo.get_by_uuid(uuid.UUID(sid))
                 if record is not None and record.is_active:
                     await sessions.revoke(record, reason="logout")
-                    await sessions.session.commit()
         except AuthError:
             pass  # Already invalid — clearing cookies is enough.
     clear_auth_cookies(response)

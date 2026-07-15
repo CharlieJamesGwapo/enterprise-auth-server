@@ -112,7 +112,7 @@ class OAuthService:
                 email=info.email,
             )
         )
-        await self.session.commit()
+        await self.session.flush()
         audit(
             "oauth_account_linked" if mode == "link" else "oauth_signup",
             user_id=str(user.id),

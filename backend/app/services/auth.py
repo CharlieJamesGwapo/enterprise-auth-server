@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AuthError, ConflictError
 from app.core.logging import get_logger
+from app.core.passwords import validate_password_strength
 from app.core.security import hash_password, needs_rehash, verify_password
 from app.models.user import User
 from app.repositories.role import RoleRepository
@@ -25,8 +26,6 @@ class AuthService:
         self.rate_limiter = rate_limiter
 
     async def register(self, email: str, password: str, full_name: str = "") -> User:
-        from app.core.passwords import validate_password_strength
-
         validate_password_strength(password)
         if await self.users.email_exists(email):
             raise ConflictError("A user with this email already exists.")

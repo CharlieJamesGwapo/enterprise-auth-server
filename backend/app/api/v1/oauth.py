@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Request, Response
 from fastapi.responses import RedirectResponse
 
-from app.api.v1.auth import _finalize_login
+from app.api.v1._login import _finalize_login
 from app.dependencies.auth import CurrentUser
 from app.dependencies.providers import (
     NotificationServiceDep,

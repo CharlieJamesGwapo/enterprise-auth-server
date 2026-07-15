@@ -50,7 +50,6 @@ async def setup(
     2FA does NOT become active here — the user must confirm via ``/verify``.
     """
     secret, uri = await service.start_setup(user, payload.password)
-    await service.session.commit()
     audit("2fa_setup_started", user_id=str(user.id))
     return SetupResponse(
         provisioning_uri=uri,
@@ -71,7 +70,6 @@ async def verify(
 ) -> SuccessResponse:
     """Verify the first OTP and activate 2FA."""
     await service.confirm_setup(user, payload.otp)
-    await service.session.commit()
     audit("2fa_enabled", user_id=str(user.id))
     return SuccessResponse()
 
@@ -99,7 +97,6 @@ async def recovery_codes(
     service.require_password(user, payload.password)
     await service.verify_totp(user, payload.otp)
     codes = await service.generate_recovery_codes(user, replace=False)
-    await service.session.commit()
     audit("2fa_recovery_codes_generated", user_id=str(user.id))
     return RecoveryCodesResponse(recovery_codes=codes)
 
@@ -118,7 +115,6 @@ async def regenerate_recovery_codes(
     service.require_password(user, payload.password)
     await service.verify_totp(user, payload.otp)
     codes = await service.generate_recovery_codes(user, replace=True)
-    await service.session.commit()
     audit("2fa_recovery_codes_regenerated", user_id=str(user.id))
     return RecoveryCodesResponse(recovery_codes=codes)
 
@@ -135,6 +131,5 @@ async def disable(
 ) -> SuccessResponse:
     """Disable 2FA (requires current password AND a valid OTP)."""
     await service.disable(user, payload.password, payload.otp)
-    await service.session.commit()
     audit("2fa_disabled", user_id=str(user.id))
     return SuccessResponse()

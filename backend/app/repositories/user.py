@@ -22,3 +22,10 @@ class UserRepository(BaseRepository[User]):
             select(func.count()).select_from(User).where(func.lower(User.email) == email.lower())
         )
         return int(result.scalar_one()) > 0
+
+    async def list_all(self, *, limit: int | None = None, offset: int = 0) -> list[User]:
+        query = select(User).order_by(User.created_at).offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
