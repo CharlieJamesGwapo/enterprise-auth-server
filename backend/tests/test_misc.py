@@ -46,6 +46,27 @@ async def test_me_with_tampered_token_rejected(client):
     assert resp.status_code == 401
 
 
+async def test_validation_error_uses_unified_envelope(client):
+    resp = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "notanemail", "password": "S3curePass!word", "full_name": "Bad Email"},
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["error"] == "validation_error"
+    assert body["detail"] == "Request validation failed."
+    assert isinstance(body["context"], list)
+    assert len(body["context"]) > 0
+
+
+async def test_unknown_route_uses_unified_envelope(client):
+    resp = await client.get("/api/v1/does-not-exist")
+    assert resp.status_code == 404
+    body = resp.json()
+    assert body["error"] == "http_error"
+    assert "detail" in body
+
+
 def test_json_formatter_emits_structured_fields():
     configure_logging("INFO")
     formatter = JsonFormatter()

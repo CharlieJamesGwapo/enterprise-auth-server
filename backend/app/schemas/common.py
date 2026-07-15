@@ -12,3 +12,10 @@ class Message(BaseModel):
 class ErrorResponse(BaseModel):
     error: str
     detail: str
+
+
+class Page[T](BaseModel):
+    items: list[T]
+    total: int
+    limit: int
+    offset: int

@@ -55,7 +55,7 @@ async def test_login_creates_session(client):
     await register(client)
     resp = await client.get("/api/v1/sessions")
     assert resp.status_code == 200
-    body = resp.json()
+    body = resp.json()["items"]
     assert len(body) == 1
     s = body[0]
     assert s["browser"] == "Chrome"
@@ -74,15 +74,16 @@ async def test_each_login_creates_independent_session(client):
     )
     assert login.status_code == 200
     resp = await client.get("/api/v1/sessions")
-    assert len(resp.json()) == 2
-    browsers = {s["browser"] for s in resp.json()}
+    items = resp.json()["items"]
+    assert len(items) == 2
+    browsers = {s["browser"] for s in items}
     assert browsers == {"Chrome", "Firefox"}
 
 
 async def test_get_single_session_and_ownership(client):
     await register(client)
     listed = await client.get("/api/v1/sessions")
-    sid = listed.json()[0]["session_id"]
+    sid = listed.json()["items"][0]["session_id"]
     resp = await client.get(f"/api/v1/sessions/{sid}")
     assert resp.status_code == 200
     assert resp.json()["session_id"] == sid
@@ -110,18 +111,18 @@ async def test_delete_specific_session(client):
         json={"email": REG["email"], "password": PASSWORD},
         headers={"user-agent": FIREFOX_WIN},
     )
-    sessions = (await client.get("/api/v1/sessions")).json()
+    sessions = (await client.get("/api/v1/sessions")).json()["items"]
     other = next(s for s in sessions if not s["current"])
     resp = await client.delete(f"/api/v1/sessions/{other['session_id']}")
     assert resp.status_code == 200
-    remaining = (await client.get("/api/v1/sessions")).json()
+    remaining = (await client.get("/api/v1/sessions")).json()["items"]
     assert len(remaining) == 1
     assert remaining[0]["current"] is True
 
 
 async def test_delete_session_with_mismatched_csrf_forbidden(client):
     await register(client)
-    sessions = (await client.get("/api/v1/sessions")).json()
+    sessions = (await client.get("/api/v1/sessions")).json()["items"]
     sid = sessions[0]["session_id"]
     resp = await client.delete(
         f"/api/v1/sessions/{sid}", headers={settings.CSRF_HEADER_NAME: "wrong-token"}
@@ -129,7 +130,7 @@ async def test_delete_session_with_mismatched_csrf_forbidden(client):
     assert resp.status_code == 403
     assert resp.json()["error"] == "permission_denied"
     # Session was not revoked.
-    remaining = (await client.get("/api/v1/sessions")).json()
+    remaining = (await client.get("/api/v1/sessions")).json()["items"]
     assert len(remaining) == 1
 
 
@@ -185,10 +186,10 @@ async def test_expired_session_is_rejected(client, monkeypatch):
 
 async def test_refresh_keeps_session_and_rotates(client):
     await register(client)
-    before = (await client.get("/api/v1/sessions")).json()[0]["session_id"]
+    before = (await client.get("/api/v1/sessions")).json()["items"][0]["session_id"]
     r = await client.post("/api/v1/auth/refresh")
     assert r.status_code == 200
-    after = (await client.get("/api/v1/sessions")).json()
+    after = (await client.get("/api/v1/sessions")).json()["items"]
     # Same session id survives rotation.
     assert len(after) == 1
     assert after[0]["session_id"] == before

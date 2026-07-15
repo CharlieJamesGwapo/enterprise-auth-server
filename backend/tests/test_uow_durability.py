@@ -17,7 +17,7 @@ REG = {"email": "uow@example.com", "password": PASSWORD, "full_name": "U"}
 
 async def test_idle_expiry_marks_session_inactive_in_db(client, session_factory, monkeypatch):
     await client.post("/api/v1/auth/register", json=REG)
-    sid = (await client.get("/api/v1/sessions")).json()[0]["session_id"]
+    sid = (await client.get("/api/v1/sessions")).json()["items"][0]["session_id"]
 
     monkeypatch.setattr(config.settings, "SESSION_IDLE_TIMEOUT_MINUTES", 0)
     r = await client.get("/api/v1/auth/me")
@@ -34,7 +34,7 @@ async def test_idle_expiry_marks_session_inactive_in_db(client, session_factory,
 
 async def test_refresh_replay_persists_revocation_in_db(client, session_factory):
     await client.post("/api/v1/auth/register", json=REG)
-    sid = (await client.get("/api/v1/sessions")).json()[0]["session_id"]
+    sid = (await client.get("/api/v1/sessions")).json()["items"][0]["session_id"]
     old = client.cookies.get("refresh_token")
     await client.post("/api/v1/auth/refresh")  # rotate
     from app.core.config import settings

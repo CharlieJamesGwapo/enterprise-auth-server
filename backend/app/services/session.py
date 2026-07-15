@@ -233,8 +233,13 @@ class SessionService:
         audit("token_refresh", user_id=str(user_id), session=str(session_uuid))
 
     # ------------------------------------------------------------- queries
-    async def list_active(self, user: User) -> list[Session]:
-        return await self.repo.list_active_for_user(user.id)
+    async def list_active(
+        self, user: User, *, limit: int | None = None, offset: int = 0
+    ) -> list[Session]:
+        return await self.repo.list_active_for_user(user.id, limit=limit, offset=offset)
+
+    async def count_active(self, user: User) -> int:
+        return await self.repo.count_active_for_user(user.id)
 
     async def get_owned(self, user: User, session_uuid: uuid.UUID) -> Session:
         record = await self.repo.get_by_uuid(session_uuid)

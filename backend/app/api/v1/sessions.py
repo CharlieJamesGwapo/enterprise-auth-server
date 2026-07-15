@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.core.cookies import clear_auth_cookies
 from app.dependencies.auth import CurrentSession, CurrentUser, verify_csrf
 from app.dependencies.providers import SessionServiceDep
 from app.models.session import Session
+from app.schemas.common import Page
 from app.schemas.session import LogoutResponse, SessionRead
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -34,13 +35,23 @@ def _to_read(record: Session, current_uuid: uuid.UUID) -> SessionRead:
     )
 
 
-@router.get("", response_model=list[SessionRead])
+@router.get("", response_model=Page[SessionRead])
 async def list_sessions(
-    user: CurrentUser, current: CurrentSession, sessions: SessionServiceDep
-) -> list[SessionRead]:
-    """List all active sessions for the current user."""
-    records = await sessions.list_active(user)
-    return [_to_read(r, current.session_uuid) for r in records]
+    user: CurrentUser,
+    current: CurrentSession,
+    sessions: SessionServiceDep,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> Page[SessionRead]:
+    """List active sessions for the current user."""
+    records = await sessions.list_active(user, limit=limit, offset=offset)
+    total = await sessions.count_active(user)
+    return Page(
+        items=[_to_read(r, current.session_uuid) for r in records],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/{session_id}", response_model=SessionRead)

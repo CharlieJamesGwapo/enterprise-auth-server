@@ -30,7 +30,7 @@ async def enable_2fa(client) -> str:
     secret = setup.json()["secret"]
     verify = await client.post("/api/v1/auth/2fa/verify", json={"otp": otp_at(secret)})
     assert verify.status_code == 200, verify.text
-    assert verify.json() == {"success": True}
+    assert verify.json()["detail"]
     return secret
 
 
@@ -232,6 +232,7 @@ async def test_disable_2fa(client):
         json={"password": PASSWORD, "otp": otp_at(secret)},
     )
     assert resp.status_code == 200
+    assert resp.json()["detail"]
     status = await client.get("/api/v1/auth/2fa/status")
     assert status.json()["enabled"] is False
 

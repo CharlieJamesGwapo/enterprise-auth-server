@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import get_logger
 
@@ -88,6 +91,24 @@ def register_exception_handlers(app: FastAPI) -> None:
         if exc.status_code >= 500:
             logger.error("app_error", extra={"error_code": exc.error_code}, exc_info=exc)
         return JSONResponse(status_code=exc.status_code, content=_payload(exc))
+
+    @app.exception_handler(RequestValidationError)
+    async def _handle_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "error": "validation_error",
+                "detail": "Request validation failed.",
+                "context": jsonable_encoder(exc.errors()),
+            },
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _handle_http_exception(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": "http_error", "detail": str(exc.detail)},
+        )
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(_: Request, exc: Exception) -> JSONResponse:

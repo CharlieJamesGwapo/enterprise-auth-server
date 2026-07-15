@@ -29,3 +29,7 @@ class UserRepository(BaseRepository[User]):
             query = query.limit(limit)
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def count_all(self) -> int:
+        result = await self.session.execute(select(func.count()).select_from(User))
+        return int(result.scalar_one())

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.dependencies.auth import CurrentSession, CurrentUser, require_permission
 from app.dependencies.providers import DbSession, SessionServiceDep
 from app.repositories.user import UserRepository
+from app.schemas.common import Page
 from app.schemas.session import LastLoginRead
 from app.schemas.user import UserRead
 
@@ -36,9 +37,20 @@ async def last_login(
 
 @router.get(
     "",
-    response_model=list[UserRead],
+    response_model=Page[UserRead],
     dependencies=[Depends(require_permission("manage_users"))],
 )
-async def list_users(session: DbSession) -> list[UserRead]:
-    users = await UserRepository(session).list_all()
-    return [UserRead.from_model(u) for u in users]
+async def list_users(
+    session: DbSession,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> Page[UserRead]:
+    repo = UserRepository(session)
+    users = await repo.list_all(limit=limit, offset=offset)
+    total = await repo.count_all()
+    return Page(
+        items=[UserRead.from_model(u) for u in users],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

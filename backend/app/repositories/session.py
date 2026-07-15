@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.models.session import Session
 from app.repositories.base import BaseRepository
@@ -27,5 +27,30 @@ class SessionRepository(BaseRepository[Session]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def list_active_for_user(self, user_id: uuid.UUID) -> list[Session]:
-        return await self.list_for_user(user_id, active_only=True)
+    async def list_active_for_user(
+        self, user_id: uuid.UUID, *, limit: int | None = None, offset: int = 0
+    ) -> list[Session]:
+        """All active sessions for a user, most recently active first.
+
+        ``limit``/``offset`` default to None/0, which returns every active
+        session — internal callers (e.g. logout-all) rely on this unpaginated
+        behavior. Only the ``GET /sessions`` route passes explicit paging.
+        """
+        stmt = (
+            select(Session)
+            .where(Session.user_id == user_id, Session.is_active.is_(True))
+            .order_by(Session.last_activity_at.desc())
+            .offset(offset)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def count_active_for_user(self, user_id: uuid.UUID) -> int:
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(Session)
+            .where(Session.user_id == user_id, Session.is_active.is_(True))
+        )
+        return int(result.scalar_one())

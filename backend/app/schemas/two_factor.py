@@ -36,10 +36,6 @@ class SetupResponse(BaseModel):
     )
 
 
-class SuccessResponse(BaseModel):
-    success: bool = True
-
-
 class RecoveryCodesResponse(BaseModel):
     """Recovery codes are returned in plaintext exactly once."""
 

@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.dependencies.auth import CurrentUser, verify_csrf
 from app.dependencies.providers import RateLimiterDep, TwoFactorServiceDep
 from app.middleware.rate_limit import client_ip
+from app.schemas.common import Message
 from app.schemas.two_factor import (
     DisableRequest,
     OtpVerifyRequest,
@@ -16,7 +17,6 @@ from app.schemas.two_factor import (
     RecoveryCodesRequest,
     RecoveryCodesResponse,
     SetupResponse,
-    SuccessResponse,
     TwoFactorStatus,
 )
 
@@ -60,18 +60,18 @@ async def setup(
 
 @router.post(
     "/verify",
-    response_model=SuccessResponse,
+    response_model=Message,
     dependencies=[Depends(_twofa_rate_limit), Depends(verify_csrf)],
 )
 async def verify(
     payload: OtpVerifyRequest,
     user: CurrentUser,
     service: TwoFactorServiceDep,
-) -> SuccessResponse:
+) -> Message:
     """Verify the first OTP and activate 2FA."""
     await service.confirm_setup(user, payload.otp)
     audit("2fa_enabled", user_id=str(user.id))
-    return SuccessResponse()
+    return Message(detail="Two-factor authentication enabled.")
 
 
 @router.get("/qrcode")
@@ -121,15 +121,15 @@ async def regenerate_recovery_codes(
 
 @router.post(
     "/disable",
-    response_model=SuccessResponse,
+    response_model=Message,
     dependencies=[Depends(_twofa_rate_limit), Depends(verify_csrf)],
 )
 async def disable(
     payload: DisableRequest,
     user: CurrentUser,
     service: TwoFactorServiceDep,
-) -> SuccessResponse:
+) -> Message:
     """Disable 2FA (requires current password AND a valid OTP)."""
     await service.disable(user, payload.password, payload.otp)
     audit("2fa_disabled", user_id=str(user.id))
-    return SuccessResponse()
+    return Message(detail="Two-factor authentication disabled.")

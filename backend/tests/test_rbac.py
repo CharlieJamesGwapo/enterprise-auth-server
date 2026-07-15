@@ -21,7 +21,7 @@ async def test_admin_can_list_users(client, seeded_session):
     await _login(client, admin.email)
     resp = await client.get("/api/v1/users")
     assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
+    assert isinstance(resp.json()["items"], list)
 
 
 async def test_plain_user_cannot_list_users(client, seeded_session):
