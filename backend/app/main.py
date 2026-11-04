@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import utils.session
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
