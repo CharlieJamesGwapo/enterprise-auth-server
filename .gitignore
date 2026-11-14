@@ -8,7 +8,6 @@ __pycache__/
 venv/
 
 # Environment variables (keep the example file)
-.env
 !.env.example
 
 # Packaging
@@ -30,3 +29,5 @@ htmlcov/
 .DS_Store
 
 # uv.lock is committed intentionally for reproducible builds - do not ignore it.
+config.bat
+node_modules
